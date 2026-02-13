@@ -1,33 +1,34 @@
 """
-Earnings Intelligence — Backend API
-Compatible with Python 3.11, 3.12, 3.13, 3.14+
-No pydantic version conflicts.
+Earnings Intelligence — Backend API v4
+Uses YouTube Data API v3 (free, no bot issues) to fetch videos.
 """
 
 import os
-import json
 import logging
 import smtplib
-from datetime import datetime, date
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SMTP_HOST  = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT  = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER  = os.getenv("SMTP_USER", "")
-SMTP_PASS  = os.getenv("SMTP_PASS", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", SMTP_USER)
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# ── CONFIG ───────────────────────────────────────────────────────────────────
+SMTP_HOST       = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT       = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER       = os.getenv("SMTP_USER", "")
+SMTP_PASS       = os.getenv("SMTP_PASS", "")
+FROM_EMAIL      = os.getenv("FROM_EMAIL", SMTP_USER)
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
-TRENDLYNE_CHANNEL_URL = "https://www.youtube.com/@trendlyne"
+# @trendlyne channel ID
+TRENDLYNE_CHANNEL_ID = "UCrOGj0hJ-XqZ1sO8pR5DHPQ"
 
-app = FastAPI(title="Earnings Intelligence API", version="3.0.0")
+app = FastAPI(title="Earnings Intelligence API", version="4.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,83 +37,102 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── YOUTUBE DATA API ─────────────────────────────────────────────────────────
 
-def parse_date(s):
-    return datetime.strptime(s, "%Y-%m-%d").date()
-
-
-def seconds_to_hms(seconds):
-    seconds = int(seconds or 0)
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    return f"{h}h {m}m" if h else f"{m}m"
-
-
-def fetch_channel_videos(from_date, to_date):
-    try:
-        import yt_dlp
-    except ImportError:
-        raise RuntimeError("yt-dlp not installed")
-
-    # Step 1: Get list of video IDs from channel
-    ydl_opts_flat = {
-        "extract_flat": "in_playlist",
-        "quiet": True,
-        "no_warnings": True,
-        "playlistend": 500,
+def get_channel_id(api_key: str) -> str:
+    """Resolve @trendlyne handle to a channel ID."""
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": "trendlyne",
+        "type": "channel",
+        "key": api_key,
+        "maxResults": 5,
     }
+    r = httpx.get(url, params=params, timeout=15)
+    data = r.json()
+    for item in data.get("items", []):
+        if "trendlyne" in item["snippet"].get("channelTitle", "").lower():
+            return item["snippet"]["channelId"]
+    # fallback — return known ID
+    return TRENDLYNE_CHANNEL_ID
 
-    video_ids = []
-    with yt_dlp.YoutubeDL(ydl_opts_flat) as ydl:
-        info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
-        for entry in (info.get("entries") or []):
-            if entry and entry.get("id"):
-                video_ids.append(entry.get("id"))
 
-    logger.info(f"Found {len(video_ids)} total videos on channel")
+def fetch_videos_in_range(from_date: str, to_date: str) -> list:
+    """
+    Fetch all videos from @trendlyne channel between from_date and to_date.
+    Uses YouTube Data API v3 search endpoint.
+    from_date / to_date: YYYY-MM-DD strings
+    """
+    if not YOUTUBE_API_KEY:
+        raise RuntimeError("YOUTUBE_API_KEY environment variable not set")
 
-    # Step 2: Fetch full metadata for each video to get upload_date
-    ydl_opts_meta = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-    }
+    # Convert dates to RFC 3339 format required by YouTube API
+    published_after  = f"{from_date}T00:00:00Z"
+    published_before = f"{to_date}T23:59:59Z"
 
+    url = "https://www.googleapis.com/youtube/v3/search"
     videos = []
-    with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-        for vid_id in video_ids:
+    next_page_token = None
+
+    while True:
+        params = {
+            "part": "snippet",
+            "channelId": TRENDLYNE_CHANNEL_ID,
+            "type": "video",
+            "order": "date",
+            "publishedAfter": published_after,
+            "publishedBefore": published_before,
+            "maxResults": 50,
+            "key": YOUTUBE_API_KEY,
+        }
+        if next_page_token:
+            params["pageToken"] = next_page_token
+
+        r = httpx.get(url, params=params, timeout=15)
+        data = r.json()
+
+        if "error" in data:
+            raise RuntimeError(f"YouTube API error: {data['error']['message']}")
+
+        for item in data.get("items", []):
+            snippet   = item.get("snippet", {})
+            video_id  = item.get("id", {}).get("videoId", "")
+            title     = snippet.get("title", "")
+            published = snippet.get("publishedAt", "")[:10]  # YYYY-MM-DD
+
             try:
-                meta = ydl.extract_info(
-                    f"https://www.youtube.com/watch?v={vid_id}",
-                    download=False
-                )
-                raw = meta.get("upload_date", "")
-                if not raw:
-                    continue
-                upload_date = datetime.strptime(raw, "%Y%m%d").date()
-                if not (from_date <= upload_date <= to_date):
-                    continue
-                videos.append({
-                    "video_id": vid_id,
-                    "title": meta.get("title", ""),
-                    "published_date": upload_date.strftime("%d %b %Y"),
-                    "upload_date": upload_date,
-                    "duration": seconds_to_hms(meta.get("duration")),
-                    "url": f"https://www.youtube.com/watch?v={vid_id}"
-                })
-            except Exception as e:
-                logger.warning(f"Could not fetch meta for {vid_id}: {e}")
-                continue
+                pub_date = datetime.strptime(published, "%Y-%m-%d")
+                pub_display = pub_date.strftime("%d %b %Y")
+            except ValueError:
+                pub_display = published
+
+            videos.append({
+                "video_id": video_id,
+                "title": title,
+                "published_date": pub_display,
+                "published_raw": published,
+                "duration": "N/A",
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+            })
+
+        next_page_token = data.get("nextPageToken")
+        if not next_page_token:
+            break
 
     # Sort newest first
-    videos.sort(key=lambda x: x["upload_date"], reverse=True)
+    videos.sort(key=lambda x: x["published_raw"], reverse=True)
+
+    # Clean up internal field
     for v in videos:
-        v.pop("upload_date", None)
+        v.pop("published_raw", None)
 
-    logger.info(f"Found {len(videos)} videos in date range")
-    return videos    
+    logger.info(f"YouTube API returned {len(videos)} videos in range")
+    return videos
 
-def get_transcript(video_id):
+
+def get_transcript(video_id: str) -> str:
+    """Fetch transcript using youtube-transcript-api."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
     except ImportError:
@@ -124,12 +144,15 @@ def get_transcript(video_id):
             t = tlist.find_transcript(["en", "en-IN"]).fetch()
         except Exception:
             t = tlist.find_generated_transcript(["en", "en-IN"]).fetch()
-        return " ".join(seg["text"].strip() for seg in t if seg.get("text"))
+        text = " ".join(seg["text"].strip() for seg in t if seg.get("text"))
+        logger.info(f"Transcript fetched for {video_id}: {len(text)} chars")
+        return text
     except Exception as e:
         logger.warning(f"No transcript for {video_id}: {e}")
         return ""
 
 
+# ── EMAIL ─────────────────────────────────────────────────────────────────────
 def send_email_report(to_email, analyses, from_date, to_date):
     if not SMTP_USER or not SMTP_PASS:
         raise RuntimeError("SMTP_USER / SMTP_PASS not configured")
@@ -158,7 +181,6 @@ body{{font-family:Georgia,serif;background:#f8f8f8;color:#1a1a1a;margin:0;paddin
 <div class="sec">
 <div class="vtitle">{i}. {item.get('title','Unknown')}</div>
 <div class="vmeta">Published: {item.get('published_date','N/A')} &nbsp;|&nbsp;
-Duration: {item.get('duration','N/A')} &nbsp;|&nbsp;
 <a href="{item.get('url','#')}">Watch on YouTube ↗</a></div>
 <div class="body">{item.get('analysis','No analysis available.')}</div>
 </div>"""
@@ -173,8 +195,8 @@ Not financial advice. Conduct your own due diligence.<br><br>Earnings Intelligen
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"📊 Earnings Report — {len(analyses)} Calls ({from_date} to {to_date})"
-    msg["From"] = FROM_EMAIL
-    msg["To"] = to_email
+    msg["From"]    = FROM_EMAIL
+    msg["To"]      = to_email
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html, "html"))
 
@@ -186,11 +208,10 @@ Not financial advice. Conduct your own due diligence.<br><br>Earnings Intelligen
     logger.info(f"Email sent to {to_email}")
 
 
-# ── ROUTES ───────────────────────────────────────────────────────────────────
-
+# ── ROUTES ────────────────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"service": "Earnings Intelligence API", "status": "ok", "version": "3.0.0"}
+    return {"service": "Earnings Intelligence API", "status": "ok", "version": "4.0.0"}
 
 
 @app.get("/health")
@@ -200,26 +221,18 @@ def health():
 
 @app.post("/api/fetch-videos")
 async def fetch_videos(request: Request):
-    body = await request.json()
-    from_date_str = body.get("from_date")
-    to_date_str   = body.get("to_date")
+    body         = await request.json()
+    from_date    = body.get("from_date", "")
+    to_date      = body.get("to_date", "")
 
-    if not from_date_str or not to_date_str:
+    if not from_date or not to_date:
         raise HTTPException(400, "from_date and to_date required")
-    try:
-        from_dt = parse_date(from_date_str)
-        to_dt   = parse_date(to_date_str)
-    except ValueError as e:
-        raise HTTPException(400, f"Invalid date format: {e}")
-
-    if from_dt > to_dt:
-        raise HTTPException(400, "from_date must be before to_date")
 
     try:
-        videos = fetch_channel_videos(from_dt, to_dt)
+        videos = fetch_videos_in_range(from_date, to_date)
         return {"success": True, "count": len(videos), "videos": videos}
     except Exception as e:
-        logger.error(e)
+        logger.error(f"fetch-videos error: {e}")
         raise HTTPException(500, str(e))
 
 
@@ -227,17 +240,21 @@ async def fetch_videos(request: Request):
 def get_video_transcript(video_id: str):
     try:
         transcript = get_transcript(video_id)
-        return {"success": True, "video_id": video_id,
-                "transcript": transcript, "length": len(transcript)}
+        return {
+            "success": True,
+            "video_id": video_id,
+            "transcript": transcript,
+            "length": len(transcript),
+        }
     except Exception as e:
-        logger.error(e)
+        logger.error(f"transcript error for {video_id}: {e}")
         raise HTTPException(500, str(e))
 
 
 @app.post("/api/send-report")
 async def send_report(request: Request):
-    body = await request.json()
-    email     = body.get("email")
+    body      = await request.json()
+    email     = body.get("email", "")
     analyses  = body.get("analyses", [])
     from_date = body.get("from_date", "")
     to_date   = body.get("to_date", "")
@@ -249,45 +266,15 @@ async def send_report(request: Request):
         send_email_report(email, analyses, from_date, to_date)
         return {"success": True, "message": f"Report sent to {email}"}
     except Exception as e:
-        logger.error(e)
+        logger.error(f"send-report error: {e}")
         raise HTTPException(500, str(e))
+
 
 @app.get("/debug/videos")
 def debug_videos():
+    """Test endpoint — returns latest 5 videos from channel."""
     try:
-        import yt_dlp
-    except ImportError:
-        return {"error": "yt-dlp not installed"}
-
-    ydl_opts = {
-        "extract_flat": "in_playlist",
-        "quiet": True,
-        "no_warnings": True,
-        "playlistend": 10,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
-            entries = info.get("entries") or []
-
-            results = []
-            for entry in entries:
-                if not entry:
-                    continue
-                results.append({
-                    "id": entry.get("id", ""),
-                    "title": entry.get("title", ""),
-                    "upload_date": entry.get("upload_date", ""),
-                    "duration": entry.get("duration", 0),
-                })
-
-            return {
-                "status": "ok",
-                "channel": TRENDLYNE_CHANNEL_URL,
-                "fetched": len(results),
-                "videos": results
-            }
-
+        videos = fetch_videos_in_range("2026-02-01", "2026-02-13")
+        return {"status": "ok", "count": len(videos), "videos": videos[:5]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
