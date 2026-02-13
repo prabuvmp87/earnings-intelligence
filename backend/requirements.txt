@@ -1,5 +1,5 @@
 fastapi
 uvicorn[standard]
-yt-dlp
+httpx
 youtube-transcript-api
 python-multipart
