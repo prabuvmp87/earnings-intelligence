@@ -93,6 +93,7 @@ def fetch_channel_videos(from_date, to_date):
         v.pop("upload_date", None)
 
     return videos
+    
 
 def get_transcript(video_id):
     try:
@@ -233,3 +234,29 @@ async def send_report(request: Request):
     except Exception as e:
         logger.error(e)
         raise HTTPException(500, str(e))
+@app.get("/debug/videos")
+def debug_videos():
+    try:
+        import yt_dlp
+    except ImportError:
+        return {"error": "yt-dlp not installed"}
+
+    ydl_opts = {
+        "extract_flat": "in_playlist",
+        "quiet": True,
+        "no_warnings": True,
+        "playlistend": 10,
+    }
+    results = []
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
+        for entry in (info.get("entries") or []):
+            if not entry:
+                continue
+            results.append({
+                "id": entry.get("id"),
+                "title": entry.get("title"),
+                "upload_date": entry.get("upload_date"),
+                "duration": entry.get("duration"),
+            })
+    return {"count": len(results), "videos": results}
