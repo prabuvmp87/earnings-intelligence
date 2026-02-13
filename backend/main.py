@@ -132,25 +132,19 @@ def fetch_videos_in_range(from_date: str, to_date: str) -> list:
 
 
 def get_transcript(video_id: str) -> str:
-    """Fetch transcript using youtube-transcript-api."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-    except ImportError:
-        raise RuntimeError("youtube-transcript-api not installed")
-
-    try:
-        tlist = YouTubeTranscriptApi.list_transcripts(video_id)
+        ytt = YouTubeTranscriptApi()
         try:
-            t = tlist.find_transcript(["en", "en-IN"]).fetch()
+            fetched = ytt.fetch(video_id, languages=["en", "en-IN"])
         except Exception:
-            t = tlist.find_generated_transcript(["en", "en-IN"]).fetch()
-        text = " ".join(seg["text"].strip() for seg in t if seg.get("text"))
+            fetched = ytt.fetch(video_id)
+        text = " ".join(seg.text.strip() for seg in fetched if seg.text)
         logger.info(f"Transcript fetched for {video_id}: {len(text)} chars")
         return text
     except Exception as e:
         logger.warning(f"No transcript for {video_id}: {e}")
         return ""
-
 
 # ── EMAIL ─────────────────────────────────────────────────────────────────────
 def send_email_report(to_email, analyses, from_date, to_date):
@@ -237,27 +231,31 @@ async def fetch_videos(request: Request):
 
 
 @app.post("/api/get-transcript/{video_id}")
-async def get_video_transcript(video_id: str):
+def get_video_transcript(video_id: str):
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(
-                f"https://www.youtube.com/watch?v={video_id}",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"},
-            )
-        # Use youtube-transcript-api with a fresh session
         from youtube_transcript_api import YouTubeTranscriptApi
-        from youtube_transcript_api.formatters import TextFormatter
-        transcript_list = YouTubeTranscriptApi.get_transcript(
-            video_id,
-            languages=["en", "en-IN", "hi"],
-            proxies=None
-        )
-        text = " ".join(seg["text"].strip() for seg in transcript_list if seg.get("text"))
-        return {"success": True, "video_id": video_id, "transcript": text, "length": len(text)}
+        ytt = YouTubeTranscriptApi()
+        try:
+            fetched = ytt.fetch(video_id, languages=["en", "en-IN"])
+        except Exception:
+            fetched = ytt.fetch(video_id)
+        text = " ".join(seg.text.strip() for seg in fetched if seg.text)
+        logger.info(f"Transcript fetched for {video_id}: {len(text)} chars")
+        return {
+            "success": True,
+            "video_id": video_id,
+            "transcript": text,
+            "length": len(text),
+        }
     except Exception as e:
-        logger.error(f"transcript error for {video_id}: {e}")
-        raise HTTPException(500, str(e))
-
+        logger.warning(f"No transcript for {video_id}: {e}")
+        return {
+            "success": False,
+            "video_id": video_id,
+            "transcript": "",
+            "length": 0,
+        }
+        
 @app.post("/api/send-report")
 async def send_report(request: Request):
     body      = await request.json()
