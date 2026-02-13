@@ -26,7 +26,7 @@ FROM_EMAIL      = os.getenv("FROM_EMAIL", SMTP_USER)
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
 # @trendlyne channel ID
-TRENDLYNE_CHANNEL_ID = "UCrOGj0hJ-XqZ1sO8pR5DHPQ"
+TRENDLYNE_CHANNEL_ID = "UCznm57tnYpUpc2q2FmO3R3Q"
 
 app = FastAPI(title="Earnings Intelligence API", version="4.0.0")
 app.add_middleware(
