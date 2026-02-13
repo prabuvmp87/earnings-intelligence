@@ -54,46 +54,63 @@ def fetch_channel_videos(from_date, to_date):
     except ImportError:
         raise RuntimeError("yt-dlp not installed")
 
-    ydl_opts = {
+    # Step 1: Get list of video IDs from channel
+    ydl_opts_flat = {
         "extract_flat": "in_playlist",
         "quiet": True,
         "no_warnings": True,
         "playlistend": 500,
     }
-    videos = []
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+
+    video_ids = []
+    with yt_dlp.YoutubeDL(ydl_opts_flat) as ydl:
         info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
         for entry in (info.get("entries") or []):
-            if not entry:
-                continue
-            raw = entry.get("upload_date")
-            if not raw:
-                continue
+            if entry and entry.get("id"):
+                video_ids.append(entry.get("id"))
+
+    logger.info(f"Found {len(video_ids)} total videos on channel")
+
+    # Step 2: Fetch full metadata for each video to get upload_date
+    ydl_opts_meta = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+    }
+
+    videos = []
+    with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+        for vid_id in video_ids:
             try:
+                meta = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={vid_id}",
+                    download=False
+                )
+                raw = meta.get("upload_date", "")
+                if not raw:
+                    continue
                 upload_date = datetime.strptime(raw, "%Y%m%d").date()
-            except ValueError:
+                if not (from_date <= upload_date <= to_date):
+                    continue
+                videos.append({
+                    "video_id": vid_id,
+                    "title": meta.get("title", ""),
+                    "published_date": upload_date.strftime("%d %b %Y"),
+                    "upload_date": upload_date,
+                    "duration": seconds_to_hms(meta.get("duration")),
+                    "url": f"https://www.youtube.com/watch?v={vid_id}"
+                })
+            except Exception as e:
+                logger.warning(f"Could not fetch meta for {vid_id}: {e}")
                 continue
-            # Only keep videos within the date range, no keyword filter
-            if not (from_date <= upload_date <= to_date):
-                continue
-            videos.append({
-                "video_id": entry.get("id"),
-                "title": entry.get("title", ""),
-                "published_date": upload_date.strftime("%d %b %Y"),
-                "upload_date": upload_date,
-                "duration": seconds_to_hms(entry.get("duration")),
-                "url": f"https://www.youtube.com/watch?v={entry.get('id')}"
-            })
 
-    # Sort by date, newest first
+    # Sort newest first
     videos.sort(key=lambda x: x["upload_date"], reverse=True)
-
-    # Remove the internal upload_date field before returning
     for v in videos:
         v.pop("upload_date", None)
 
-    return videos
-    
+    logger.info(f"Found {len(videos)} videos in date range")
+    return videos    
 
 def get_transcript(video_id):
     try:
