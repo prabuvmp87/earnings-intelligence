@@ -237,19 +237,26 @@ async def fetch_videos(request: Request):
 
 
 @app.post("/api/get-transcript/{video_id}")
-def get_video_transcript(video_id: str):
+async def get_video_transcript(video_id: str):
     try:
-        transcript = get_transcript(video_id)
-        return {
-            "success": True,
-            "video_id": video_id,
-            "transcript": transcript,
-            "length": len(transcript),
-        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(
+                f"https://www.youtube.com/watch?v={video_id}",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"},
+            )
+        # Use youtube-transcript-api with a fresh session
+        from youtube_transcript_api import YouTubeTranscriptApi
+        from youtube_transcript_api.formatters import TextFormatter
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            languages=["en", "en-IN", "hi"],
+            proxies=None
+        )
+        text = " ".join(seg["text"].strip() for seg in transcript_list if seg.get("text"))
+        return {"success": True, "video_id": video_id, "transcript": text, "length": len(text)}
     except Exception as e:
         logger.error(f"transcript error for {video_id}: {e}")
         raise HTTPException(500, str(e))
-
 
 @app.post("/api/send-report")
 async def send_report(request: Request):
