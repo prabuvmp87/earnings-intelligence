@@ -6,7 +6,7 @@ const API_BASE =
   typeof window !== "undefined" &&
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? "http://localhost:8000"
-    : "https://YOUR-BACKEND.onrender.com"; // ← update after deployment
+    : "https://earnings-intelligence-api.onrender.com"; // ← update after deployment
 
 const ANALYSIS_PROMPT = `You are an expert equity research analyst with deep expertise in fundamental analysis, behavioral finance, industry dynamics, and technical interpretation.
 I will provide the quarterly earnings call transcript of a publicly traded company.
