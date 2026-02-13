@@ -234,6 +234,7 @@ async def send_report(request: Request):
     except Exception as e:
         logger.error(e)
         raise HTTPException(500, str(e))
+
 @app.get("/debug/videos")
 def debug_videos():
     try:
@@ -247,16 +248,29 @@ def debug_videos():
         "no_warnings": True,
         "playlistend": 10,
     }
-    results = []
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
-        for entry in (info.get("entries") or []):
-            if not entry:
-                continue
-            results.append({
-                "id": entry.get("id"),
-                "title": entry.get("title"),
-                "upload_date": entry.get("upload_date"),
-                "duration": entry.get("duration"),
-            })
-    return {"count": len(results), "videos": results}
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"{TRENDLYNE_CHANNEL_URL}/videos", download=False)
+            entries = info.get("entries") or []
+
+            results = []
+            for entry in entries:
+                if not entry:
+                    continue
+                results.append({
+                    "id": entry.get("id", ""),
+                    "title": entry.get("title", ""),
+                    "upload_date": entry.get("upload_date", ""),
+                    "duration": entry.get("duration", 0),
+                })
+
+            return {
+                "status": "ok",
+                "channel": TRENDLYNE_CHANNEL_URL,
+                "fetched": len(results),
+                "videos": results
+            }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
