@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: earnings-intelligence-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false   # Set in Render dashboard
+      - key: SMTP_PASS
+        sync: false   # Set in Render dashboard
+      - key: FROM_EMAIL
+        sync: false   # Set in Render dashboard
+      - key: CORS_ORIGINS
+        value: "*"
+    # NOTE: No ANTHROPIC_API_KEY needed!
+    # AI analysis runs FREE via the built-in Claude artifact API in the frontend.
