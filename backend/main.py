@@ -58,7 +58,7 @@ def fetch_channel_videos(from_date, to_date):
         "extract_flat": "in_playlist",
         "quiet": True,
         "no_warnings": True,
-        "playlistend": 200,
+        "playlistend": 500,
     }
     videos = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -73,22 +73,26 @@ def fetch_channel_videos(from_date, to_date):
                 upload_date = datetime.strptime(raw, "%Y%m%d").date()
             except ValueError:
                 continue
+            # Only keep videos within the date range, no keyword filter
             if not (from_date <= upload_date <= to_date):
-                continue
-            title = entry.get("title", "")
-            keywords = ["earnings", "q1", "q2", "q3", "q4", "quarterly",
-                        "results", "concall", "analyst", "investor"]
-            if not any(k in title.lower() for k in keywords):
                 continue
             videos.append({
                 "video_id": entry.get("id"),
-                "title": title,
+                "title": entry.get("title", ""),
                 "published_date": upload_date.strftime("%d %b %Y"),
+                "upload_date": upload_date,
                 "duration": seconds_to_hms(entry.get("duration")),
                 "url": f"https://www.youtube.com/watch?v={entry.get('id')}"
             })
-    return videos
 
+    # Sort by date, newest first
+    videos.sort(key=lambda x: x["upload_date"], reverse=True)
+
+    # Remove the internal upload_date field before returning
+    for v in videos:
+        v.pop("upload_date", None)
+
+    return videos
 
 def get_transcript(video_id):
     try:
