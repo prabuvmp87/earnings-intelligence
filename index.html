@@ -31,109 +31,101 @@ const { useState, useRef, useEffect } = React;
 
 const API_BASE = "https://earnings-intelligence-api.onrender.com";
 
-const ANALYSIS_PROMPT = `You are an expert equity research analyst. Analyze the earnings call transcript below and respond ONLY with a complete HTML block (no markdown, no backticks, no explanation outside the HTML). Use the exact HTML structure below, filling in all sections with real analysis.
+const ANALYSIS_PROMPT = `You are an expert equity research analyst with deep expertise in fundamental analysis, behavioral finance, industry dynamics, and technical interpretation.
+I will provide the quarterly earnings call transcript of a publicly traded company.
+Your job is to perform a comprehensive qualitative and quantitative analysis and determine if the stock is a good long-term hold.
 
-<div class="report">
+⚙️ ANALYSIS FRAMEWORK
 
-<div class="section">
-<div class="section-title">⚙️ PART 1 — CORE FUNDAMENTAL ASSESSMENT</div>
+PART 1 — CORE FUNDAMENTAL ASSESSMENT
+Present findings using 🟢 Green (Positive), 🔴 Red (Negative), and ⚪ Grey (Neutral) indicators.
+1️⃣ Management Tone & Confidence
+2️⃣ Business Performance – revenue, profit, margins, EPS, cash flow, debt (YoY & QoQ)
+3️⃣ Growth Drivers – products, markets, partnerships, R&D, acquisitions
+4️⃣ Risks & Challenges – competitive threats, macro, cost pressures, regulatory
+5️⃣ Industry & Market Outlook
+6️⃣ Capital Allocation & Shareholder Returns
+7️⃣ Guidance & Forecast
+8️⃣ Sentiment Analysis
+9️⃣ Investment Rating – Strong Buy / Buy / Cautious / Sell
+🔟 Final Verdict
 
-<div class="item green">🟢 1️⃣ Management Tone & Confidence: [Optimistic/Cautious/Defensive — explain tone, key phrases used]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 2️⃣ Business Performance: [Revenue, profit, margins, EPS, cash flow, debt YoY & QoQ]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 3️⃣ Growth Drivers: [New products, markets, partnerships, R&D, acquisitions]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 4️⃣ Risks & Challenges: [Competitive threats, macro, cost pressures, regulatory]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 5️⃣ Industry & Market Outlook: [Sector trends, peer benchmarking]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 6️⃣ Capital Allocation: [Dividends, buybacks, debt repayment, reinvestment]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 7️⃣ Guidance & Forecast: [Management projections, credibility, visibility]</div>
-<div class="item [green|red|grey]">🟢/🔴/⚪ 8️⃣ Sentiment Analysis: [Linguistic tone, confidence vs caution signals]</div>
-<div class="rating-box [strong-buy|buy|hold|avoid]">9️⃣ Investment Rating: [STRONG BUY / BUY / HOLD / AVOID] — [one line rationale]</div>
-<div class="verdict-box">🔟 Final Verdict: [2–3 sentences on long-term suitability]</div>
-</div>
+PART 2 — STRATEGIC QUALITY CHECK
+• Is multi-year ROE/ROCE rising and consistent?
+• Is management integrity unquestionable?
+• Is it a market leader with strong competitive moats?
+• Is cash flow conversion high (OCF/PAT > 1)?
+• DuPont ROE analysis insights?
+• Are sector/macro trends favorable?
+• Visible scalability and long-term compounding potential?
+• Category winner or turnaround candidate?
+• Sound capital allocation and shareholder alignment?
+• Are earnings, revenue, EPS consistently growing?
+• Are margins stable or expanding, debt manageable?
+• Resilient during downturns (e.g., COVID)?
+• Strong unit economics with pricing power?
+• Recent strategic shifts, leadership changes, product launches?
 
-<div class="section">
-<div class="section-title">🔍 PART 2 — STRATEGIC QUALITY CHECK</div>
-<div class="check-grid">
-<div class="check [yes|no|partial]">ROE/ROCE Trend: [Rising/Falling/Stable]</div>
-<div class="check [yes|no|partial]">Management Integrity: [Strong/Concerns/Unclear]</div>
-<div class="check [yes|no|partial]">Market Leadership: [Leader/Challenger/Niche]</div>
-<div class="check [yes|no|partial]">Cash Flow Quality: [OCF/PAT — High/Medium/Low]</div>
-<div class="check [yes|no|partial]">Sector Tailwinds: [Favorable/Neutral/Headwinds]</div>
-<div class="check [yes|no|partial]">Scalability: [High/Medium/Limited]</div>
-<div class="check [yes|no|partial]">Earnings Growth: [Consistent/Volatile/Declining]</div>
-<div class="check [yes|no|partial]">Pricing Power: [Strong/Moderate/Weak]</div>
-<div class="check [yes|no|partial]">COVID Resilience: [Resilient/Mixed/Impacted]</div>
-<div class="check [yes|no|partial]">Shareholder Alignment: [Strong/Moderate/Weak]</div>
-</div>
-</div>
+PART 3 — CATALYST TABLE
+| Catalyst | Positive/Neutral/Negative | Key Evidence | Potential Stock Impact |
+|---|---|---|---|
+| 1️⃣ Operating Leverage & Margin Expansion | | | |
+| 2️⃣ Sectoral Tailwinds | | | |
+| 3️⃣ Product Mix Improvements | | | |
+| 4️⃣ Capacity Expansion Plans | | | |
+| 5️⃣ Insider Buying / Promoter Confidence | | | |
+| 6️⃣ Geographical Expansion | | | |
+| 7️⃣ Supply-Side Consolidation | | | |
+| 8️⃣ Debt Reduction / ROE-ROCE Improvement | | | |
+| 9️⃣ Operational Efficiency / Tech Adoption | | | |
+| 🔟 Market Share Gains | | | |
+| 11️⃣ Corporate Actions (M&A, Buyback, Spinoff) | | | |
+| 12️⃣ Creating Optionality (Governance, ESG, Leadership) | | | |
 
-<div class="section">
-<div class="section-title">⚡ PART 3 — CATALYST TABLE</div>
-<table class="catalyst-table">
-<thead><tr><th>Catalyst</th><th>Signal</th><th>Evidence</th><th>Impact</th></tr></thead>
-<tbody>
-<tr class="[pos|neu|neg]"><td>1️⃣ Operating Leverage & Margin Expansion</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>2️⃣ Sectoral Tailwinds</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>3️⃣ Product Mix Improvements</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>4️⃣ Capacity Expansion Plans</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>5️⃣ Promoter Confidence</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>6️⃣ Geographical Expansion</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>7️⃣ Supply-Side Consolidation</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>8️⃣ Debt Reduction / ROE-ROCE</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>9️⃣ Operational Efficiency</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>🔟 Market Share Gains</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>11️⃣ Corporate Actions</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-<tr class="[pos|neu|neg]"><td>12️⃣ Governance / ESG</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
-</tbody>
-</table>
-</div>
+PART 4 — STRUCTURED SUMMARY
+| Category | Assessment | Evidence |
+|---|---|---|
+| Management Tone | | |
+| Financial Trends | | |
+| Growth Drivers | | |
+| Risks | | |
+| Industry Position | | |
+| Capital Allocation | | |
+| Guidance | | |
+| Sentiment | | |
+| Rating | | |
 
-<div class="section">
-<div class="section-title">📋 PART 4 — STRUCTURED SUMMARY</div>
-<table class="summary-table">
-<thead><tr><th>Category</th><th>Assessment</th><th>Key Evidence</th></tr></thead>
-<tbody>
-<tr><td>Management Tone</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Financial Trends</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Growth Drivers</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Risks</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Industry Position</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Capital Allocation</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Guidance</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Sentiment</td><td>[assessment]</td><td>[evidence]</td></tr>
-<tr><td>Rating</td><td>[STRONG BUY/BUY/HOLD/AVOID]</td><td>[rationale]</td></tr>
-</tbody>
-</table>
-<div class="positives"><strong>🟢 Positives:</strong> [list key positives]</div>
-<div class="negatives"><strong>🔴 Negatives:</strong> [list key negatives]</div>
-<div class="neutrals"><strong>⚪ Neutrals:</strong> [list neutrals]</div>
-</div>
+🟢 Positives:
+🔴 Negatives:
+⚪ Neutrals:
 
-<div class="section conclusion">
-<div class="section-title">🎯 PART 5 — CONCLUSION</div>
-<div class="conclusion-item"><strong>Overall Management Tone:</strong> [Bullish/Cautious/Defensive]</div>
-<div class="conclusion-item"><strong>Key Triggers for Next Quarter:</strong> [triggers]</div>
-<div class="conclusion-item"><strong>Risks Mentioned or Implied:</strong> [risks]</div>
-<div class="verdict-final [strong-buy|buy|hold|avoid]"><strong>Verdict:</strong> [STRONG BUY / BUY OR ACCUMULATE / HOLD / WATCHLIST / AVOID]</div>
-<div class="analyst-view"><strong>Analyst View:</strong> [5 sentences — conviction level, growth potential, valuation comfort zone. If Buy, mention triggers that would upgrade to Strong Buy.]</div>
-</div>
-
-</div>
+PART 5 — CONCLUSION
+• Overall Management Tone: Bullish / Cautious / Defensive
+• Key Triggers for Next Quarter:
+• Risks Mentioned or Implied:
+• Verdict: Strong Buy / Buy or Accumulate / Hold / Watchlist / Avoid
+• Analyst View (5 sentences): conviction level, growth potential, valuation comfort zone.
+  If Buy, mention triggers that would upgrade to Strong Buy.
 
 Transcript:
 ---
 {TRANSCRIPT}
 ---`;
 
-async function analyzeWithAI(transcript, title) {
+async function analyzeWithClaude(transcript, title) {
   const prompt = ANALYSIS_PROMPT.replace("{TRANSCRIPT}", transcript.slice(0, 80000));
-  const response = await fetch(`${API_BASE}/api/analyze`, {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, title }),
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }],
+    }),
   });
-  if (!response.ok) throw new Error(`Analysis failed: ${response.status}`);
+  if (!response.ok) throw new Error(`Claude API error: ${response.status}`);
   const data = await response.json();
-  return data.analysis || "";
+  return data.content.map(b => b.text || "").join("\n");
 }
 
 function LogLine({ time, type, msg }) {
@@ -176,23 +168,95 @@ function App() {
   const [emailSent, setEmailSent] = useState(false);
   const logsRef = useRef(null);
 
+  // Scheduler state
+  const [scheduleMode, setScheduleMode] = useState("manual"); // manual | interval | daily
+  const [intervalUnit, setIntervalUnit] = useState("hour");   // minute | hour
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [dailyTime, setDailyTime] = useState("08:00");
+  const [scheduleActive, setScheduleActive] = useState(false);
+  const [nextRun, setNextRun] = useState(null);
+  const [runCount, setRunCount] = useState(0);
+  const scheduleRef = useRef(null);
+  const nextRunRef = useRef(null);
+
   useEffect(() => {
     if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight;
   }, [logs]);
+
+  // Cleanup scheduler on unmount
+  useEffect(() => {
+    return () => {
+      if (scheduleRef.current) clearTimeout(scheduleRef.current);
+      if (nextRunRef.current) clearInterval(nextRunRef.current);
+    };
+  }, []);
 
   const ts = () => new Date().toLocaleTimeString("en-US",{hour12:false});
   const addLog = (msg, type="msg") => setLogs(p=>[...p,{time:ts(),msg,type}]);
   const updateVideo = (idx, patch) => setVideos(p=>p.map((v,i)=>i===idx?{...v,...patch}:v));
 
-  async function run() {
-    if (!fromDate||!toDate||!email) return alert("Please fill all fields.");
+  function getNextRunTime() {
+    if (scheduleMode === "interval") {
+      const ms = intervalUnit === "minute" ? intervalValue * 60000 : intervalValue * 3600000;
+      return new Date(Date.now() + ms);
+    }
+    if (scheduleMode === "daily") {
+      const [h, m] = dailyTime.split(":").map(Number);
+      const next = new Date();
+      next.setHours(h, m, 0, 0);
+      if (next <= new Date()) next.setDate(next.getDate() + 1);
+      return next;
+    }
+    return null;
+  }
+
+  function scheduleNext(runFn) {
+    const next = getNextRunTime();
+    if (!next) return;
+    setNextRun(next);
+    const delay = next - Date.now();
+    scheduleRef.current = setTimeout(async () => {
+      await runFn(true);
+      setRunCount(c => c + 1);
+      if (scheduleActive) scheduleNext(runFn);
+    }, delay);
+  }
+
+  function startSchedule() {
+    if (!email) return alert("Please enter email first.");
+    setScheduleActive(true);
+    setRunCount(0);
+    addLog(`⏰ Scheduler started — ${scheduleMode === "interval" 
+      ? `every ${intervalValue} ${intervalUnit}(s)` 
+      : `daily at ${dailyTime}`}`, "info");
+    scheduleNext((isScheduled) => run(isScheduled));
+  }
+
+  function stopSchedule() {
+    setScheduleActive(false);
+    setNextRun(null);
+    if (scheduleRef.current) clearTimeout(scheduleRef.current);
+    addLog("⏹ Scheduler stopped.", "err");
+  }
+
+  async function run(isScheduled=false) {
+    // For scheduled runs, always use last 24 hours dynamically
+    let runFrom = fromDate;
+    let runTo   = toDate;
+    if (isScheduled) {
+      const now  = new Date();
+      const past = new Date(Date.now() - 24*60*60*1000);
+      runTo   = now.toISOString().split("T")[0];
+      runFrom = past.toISOString().split("T")[0];
+    }
+
+    if (!runFrom||!runTo||!email) return alert("Please fill all fields.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return alert("Invalid email.");
-    if (new Date(fromDate)>new Date(toDate)) return alert("From date must be before To date.");
 
     setRunning(true); setLogs([]); setVideos([]); setProgress(0); setEmailSent(false);
 
-    addLog("Initializing earnings intelligence pipeline...", "info");
-    addLog(`Date range: ${fromDate} → ${toDate}`, "msg");
+    addLog(isScheduled ? "⏰ Scheduled run triggered..." : "Initializing earnings intelligence pipeline...", "info");
+    addLog(`Date range: ${runFrom} → ${runTo}${isScheduled?" (last 24 hours)":""}`, "msg");
     addLog(`Email: ${email}`, "msg");
 
     try {
@@ -202,7 +266,7 @@ function App() {
       const vRes = await fetch(`${API_BASE}/api/fetch-videos`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({from_date:fromDate, to_date:toDate}),
+        body: JSON.stringify({from_date:runFrom, to_date:runTo}),
       });
       if (!vRes.ok) throw new Error(`Failed to fetch videos: ${vRes.statusText}`);
       const vData = await vRes.json();
@@ -225,29 +289,20 @@ function App() {
         updateVideo(i, {status:"Analyzing"});
 
         try {
-          // Fetch transcript via Supadata API (rotating keys)
+          // Fetch transcript via Supadata API
           addLog(`Fetching transcript...`, "info");
           let transcript = "";
 
-          const supadataKeys = [
-            "sd_a96006039b0ec279e7ab80fb28098c82",
-            "sd_9e4ca6a05a68b38c4e8dc5f04cb27a30",
-            "sd_91298bda05c18ac2de5b58b31567aabe",
-          ];
-
-          for (const key of supadataKeys) {
-            try {
-              const sdRes = await fetch(
-                `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
-                { headers: { "x-api-key": key } }
-              );
-              if (sdRes.ok) {
-                const sdData = await sdRes.json();
-                transcript = sdData.content || sdData.transcript || sdData.text || "";
-                if (transcript.length > 100) break;
-              }
-            } catch(e) { /* try next key */ }
-          }
+          try {
+            const sdRes = await fetch(
+              `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
+              { headers: { "x-api-key": "sd_a96006039b0ec279e7ab80fb28098c82" } }
+            );
+            if (sdRes.ok) {
+              const sdData = await sdRes.json();
+              transcript = sdData.content || sdData.transcript || sdData.text || "";
+            }
+          } catch(e) { /* supadata failed */ }
 
           if (!transcript) {
             addLog(`⚠ No transcript for: ${v.title}`, "err");
@@ -257,7 +312,7 @@ function App() {
           }
 
           addLog(`✓ Got transcript (${Math.round(transcript.length/1000)}k chars) — running AI analysis...`, "ai");
-          const analysis = await analyzeWithAI(transcript, v.title);
+          const analysis = await analyzeWithClaude(transcript, v.title);
           updateVideo(i, {status:"Done", analysis});
           analyses.push({...v, analysis});
           addLog(`✓ Analysis complete: ${v.title}`, "ok");
@@ -275,7 +330,7 @@ function App() {
       const eRes = await fetch(`${API_BASE}/api/send-report`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({email, analyses, from_date:fromDate, to_date:toDate}),
+        body: JSON.stringify({email, analyses, from_date:runFrom, to_date:runTo}),
       });
       if (!eRes.ok) throw new Error(`Email failed: ${eRes.statusText}`);
 
@@ -343,7 +398,7 @@ function App() {
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:1,
           background:"#1e1e2e",border:"1px solid #1e1e2e",borderRadius:8,
           overflow:"hidden",margin:"32px 0"}}>
-          {[["📺","Source","@trendlyne"],["🤖","AI Engine","Built-in Claude (Free)"],["📧","Delivery","Email Report"]].map(([icon,label,val])=>(
+          {[["📺","Source","@trendlyne"],["🤖","AI Engine","OpenRouter (Free)"],["📧","Delivery","Email Report"]].map(([icon,label,val])=>(
             <div key={label} style={{background:"#111118",padding:"18px 20px",textAlign:"center"}}>
               <div style={{fontSize:22,marginBottom:6}}>{icon}</div>
               <div style={{fontSize:10,letterSpacing:2,color:"#555",textTransform:"uppercase",
@@ -387,15 +442,83 @@ function App() {
             </div>
           )}
 
-          <button onClick={run} disabled={running} style={{
-            width:"100%",padding:14,background:running?"rgba(232,255,71,0.4)":"#e8ff47",
-            color:"#0a0a0f",border:"none",borderRadius:6,fontFamily:"Syne,sans-serif",
-            fontSize:13,fontWeight:800,letterSpacing:2,textTransform:"uppercase",
-            cursor:running?"not-allowed":"pointer",transition:"all 0.15s",
-            display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <span style={{fontSize:16}}>{running?"⏳":"⚡"}</span>
-            {running?"Analyzing...":"Run Earnings Analysis"}
-          </button>
+          {/* Schedule Mode Selector */}
+          <div style={{marginBottom:16}}>
+            <label style={labelStyle}>RUN MODE</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+              {[["manual","▶ Manual"],["interval","🔁 Interval"],["daily","📅 Daily"]].map(([mode,label])=>(
+                <button key={mode} onClick={()=>{setScheduleMode(mode);if(scheduleActive)stopSchedule();}}
+                  style={{padding:"9px 4px",border:`1px solid ${scheduleMode===mode?"#e8ff47":"#1e1e2e"}`,
+                    background:scheduleMode===mode?"rgba(232,255,71,0.1)":"transparent",
+                    color:scheduleMode===mode?"#e8ff47":"#555",borderRadius:6,
+                    fontFamily:"Syne,sans-serif",fontSize:11,fontWeight:700,
+                    cursor:"pointer",letterSpacing:1}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Interval Options */}
+          {scheduleMode==="interval" && (
+            <div style={{marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div>
+                <label style={labelStyle}>EVERY</label>
+                <input type="number" min={1} max={60} value={intervalValue}
+                  onChange={e=>setIntervalValue(Number(e.target.value))} style={inputStyle}/>
+              </div>
+              <div>
+                <label style={labelStyle}>UNIT</label>
+                <select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value)}
+                  style={{...inputStyle,cursor:"pointer"}}>
+                  <option value="minute">Minutes</option>
+                  <option value="hour">Hours</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Daily Time Option */}
+          {scheduleMode==="daily" && (
+            <div style={{marginBottom:16}}>
+              <label style={labelStyle}>RUN DAILY AT</label>
+              <input type="time" value={dailyTime} onChange={e=>setDailyTime(e.target.value)} style={inputStyle}/>
+            </div>
+          )}
+
+          {/* Next Run Info */}
+          {scheduleActive && nextRun && (
+            <div style={{marginBottom:14,padding:"10px 14px",background:"rgba(232,255,71,0.06)",
+              border:"1px solid rgba(232,255,71,0.2)",borderRadius:6,fontSize:11,
+              color:"#e8ff47",fontFamily:"'DM Mono',monospace"}}>
+              ⏰ Next run: {nextRun.toLocaleTimeString()} &nbsp;|&nbsp; Runs completed: {runCount}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div style={{display:"grid",gridTemplateColumns:scheduleMode!=="manual"?"1fr 1fr":"1fr",gap:10}}>
+            <button onClick={run} disabled={running} style={{
+              padding:14,background:running?"rgba(232,255,71,0.4)":"#e8ff47",
+              color:"#0a0a0f",border:"none",borderRadius:6,fontFamily:"Syne,sans-serif",
+              fontSize:13,fontWeight:800,letterSpacing:2,textTransform:"uppercase",
+              cursor:running?"not-allowed":"pointer",transition:"all 0.15s",
+              display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <span style={{fontSize:16}}>{running?"⏳":"⚡"}</span>
+              {running?"Analyzing...":"Run Now"}
+            </button>
+            {scheduleMode!=="manual" && (
+              <button onClick={scheduleActive?stopSchedule:startSchedule}
+                style={{padding:14,
+                  background:scheduleActive?"rgba(255,71,87,0.15)":"rgba(46,213,115,0.15)",
+                  color:scheduleActive?"#ff4757":"#2ed573",
+                  border:`1px solid ${scheduleActive?"#ff4757":"#2ed573"}`,
+                  borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:13,fontWeight:800,
+                  letterSpacing:2,textTransform:"uppercase",cursor:"pointer",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {scheduleActive?"⏹ Stop":"▶ Start Schedule"}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Terminal */}
