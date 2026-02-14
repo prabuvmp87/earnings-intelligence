@@ -194,11 +194,16 @@ Not financial advice. Conduct your own due diligence.<br><br>Earnings Intelligen
     msg.attach(MIMEText(plain, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-        s.ehlo()
-        s.starttls()
-        s.login(SMTP_USER, SMTP_PASS)
-        s.sendmail(FROM_EMAIL, to_email, msg.as_string())
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.ehlo()
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(FROM_EMAIL, to_email, msg.as_string())
+    except Exception:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465) as s:
+            s.login(SMTP_USER, SMTP_PASS)
+            s.sendmail(FROM_EMAIL, to_email, msg.as_string())
     logger.info(f"Email sent to {to_email}")
 
 
