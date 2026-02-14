@@ -159,7 +159,7 @@ function App() {
   const weekAgo = new Date(Date.now()-7*86400000).toISOString().split("T")[0];
 
   // Mode
-  const [mode, setMode] = useState("manual"); // manual | interval | daily
+  const [mode, setMode] = useState("manual");
 
   // Manual fields
   const [fromDate, setFromDate] = useState(weekAgo);
@@ -170,14 +170,15 @@ function App() {
 
   // Interval config
   const [intervalValue, setIntervalValue] = useState(1);
-  const [intervalUnit, setIntervalUnit]   = useState("hour"); // minute | hour
+  const [intervalUnit, setIntervalUnit]   = useState("hour");
 
   // Daily config
   const [dailyTime, setDailyTime] = useState("08:00");
 
-  // Schedule state
+  // Schedule state — stored in Render backend (cloud)
   const [scheduleActive, setScheduleActive]   = useState(false);
-  const [scheduleDetails, setScheduleDetails] = useState(null); // {mode, label, nextRun, runCount}
+  const [scheduleDetails, setScheduleDetails] = useState(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
   const scheduleRef = useRef(null);
 
   // Run state
@@ -196,9 +197,33 @@ function App() {
     return () => { if (scheduleRef.current) clearTimeout(scheduleRef.current); };
   }, []);
 
+  // Persist config to localStorage
   const ts = () => new Date().toLocaleTimeString("en-US",{hour12:false});
   const addLog = (msg, type="msg") => setLogs(p=>[...p,{time:ts(),msg,type}]);
   const updateVideo = (idx, patch) => setVideos(p=>p.map((v,i)=>i===idx?{...v,...patch}:v));
+
+  // Load schedule from cloud backend on page load
+  useEffect(() => {
+    async function loadSchedule() {
+      try {
+        const r = await fetch(`${API_BASE}/api/schedule`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.active) {
+            setScheduleActive(true);
+            setScheduleDetails(data);
+            setMode(data.mode || "interval");
+            setEmail(data.email || "");
+            setIntervalValue(data.intervalValue || 1);
+            setIntervalUnit(data.intervalUnit || "hour");
+            setDailyTime(data.dailyTime || "08:00");
+            addLog("☁️ Active schedule loaded from cloud.", "ok");
+          }
+        }
+      } catch(e) { /* silent fail */ }
+    }
+    loadSchedule();
+  }, []);
 
   function getLast24h() {
     const now  = new Date();
@@ -329,33 +354,39 @@ function App() {
     }
   }
 
-  function scheduleNext(count=0) {
-    const next = getNextRunTime();
-    if (!next) return;
-    const delay = next - Date.now();
+  // scheduleNext removed — backend handles scheduling via cron loop
 
-    setScheduleDetails(prev => ({...prev, nextRun: next, runCount: count}));
-
-    scheduleRef.current = setTimeout(async () => {
-      await runAnalysis(true);
-      scheduleNext(count+1);
-    }, delay);
-  }
-
-  function startSchedule() {
+  async function startSchedule() {
     if (!email) return alert("Please enter your email first.");
-    setScheduleActive(true);
-    const next = getNextRunTime();
-    setScheduleDetails({ mode, label: scheduleLabel(), nextRun: next, runCount: 0 });
-    scheduleNext(0);
-    addLog(`⏰ Schedule started — ${scheduleLabel()}`, "info");
-    addLog(`Next run at: ${next.toLocaleString()}`, "msg");
+    setScheduleLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/schedule`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ mode, email, intervalValue, intervalUnit, dailyTime }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      setScheduleActive(true);
+      setScheduleDetails(data.schedule);
+      addLog(`☁️ Schedule saved to cloud — ${scheduleLabel()}`, "ok");
+      addLog(`Next run at: ${new Date(data.schedule.next_run).toLocaleString()}`, "msg");
+    } catch(e) {
+      addLog(`✗ Failed to start schedule: ${e.message}`, "err");
+    } finally {
+      setScheduleLoading(false);
+    }
   }
 
-  function stopSchedule() {
+  async function stopSchedule() {
     if (scheduleRef.current) clearTimeout(scheduleRef.current);
+    setScheduleLoading(true);
+    try {
+      await fetch(`${API_BASE}/api/schedule`, { method: "DELETE" });
+    } catch(e) {}
     setScheduleActive(false);
     setScheduleDetails(null);
+    setScheduleLoading(false);
     addLog("⏹ Schedule cancelled.", "err");
   }
 
@@ -551,7 +582,7 @@ function App() {
               <span style={{fontSize:16}}>
                 {running?"⏳":mode==="manual"?"⚡":"▶"}
               </span>
-              {running?"Analyzing...":mode==="manual"?"Run Analysis":"Start Schedule"}
+              {running?"Analyzing...":scheduleLoading?"Saving...":mode==="manual"?"Run Analysis":"Start Schedule"}
             </button>
           )}
         </div>
@@ -572,9 +603,9 @@ function App() {
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
               {[
-                ["⏰","Frequency", scheduleDetails.label],
-                ["📅","Next Run",  scheduleDetails.nextRun?.toLocaleString()],
-                ["✅","Runs Done", scheduleDetails.runCount],
+                ["⏰","Frequency", scheduleDetails.label || scheduleLabel()],
+                ["📅","Next Run",  scheduleDetails.next_run ? new Date(scheduleDetails.next_run).toLocaleString() : "Calculating..."],
+                ["✅","Runs Done", scheduleDetails.run_count ?? 0],
               ].map(([icon,label,val])=>(
                 <div key={label} style={{background:"rgba(255,255,255,0.03)",border:"1px solid #1e1e2e",
                   borderRadius:8,padding:"14px 16px"}}>
@@ -588,8 +619,9 @@ function App() {
 
             <div style={{background:"rgba(232,255,71,0.04)",border:"1px solid rgba(232,255,71,0.15)",
               borderRadius:6,padding:"10px 14px",marginBottom:20,fontSize:11,color:"#888"}}>
-              📧 Reports auto-sent to <strong style={{color:"#e8ff47"}}>{email}</strong> &nbsp;|&nbsp;
-              📅 Fetches <strong style={{color:"#e8ff47"}}>last 24 hours</strong> on every run
+              ☁️ Runs on Render server — works even when browser is closed &nbsp;|&nbsp;
+              📧 Reports sent to <strong style={{color:"#e8ff47"}}>{scheduleDetails.email || email}</strong> &nbsp;|&nbsp;
+              📅 Fetches <strong style={{color:"#e8ff47"}}>last 24 hours</strong> each run
             </div>
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -617,7 +649,7 @@ function App() {
                 borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:11,fontWeight:800,
                 letterSpacing:2,textTransform:"uppercase",cursor:running?"not-allowed":"pointer",
                 display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              {running?"⏳ Running...":"⚡ Run Now (Last 24h)"}
+              {running?"⏳ Running...":"⚡ Run Now (Last 24h) — Manual Trigger"}
             </button>
           </div>
         )}
