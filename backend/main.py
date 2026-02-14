@@ -27,6 +27,8 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "")
 TRENDLYNE_CHANNEL_ID = "UCznm57tnYpUpc2q2FmO3R3Q"
 SCHEDULE_FILE      = Path("/tmp/ei_schedule.json")
+ACTIVITY_LOG_FILE  = Path("/tmp/ei_activity.json")
+MAX_LOG_ENTRIES    = 200
 
 # ── SCHEDULER STORE ───────────────────────────────────────────────────────────
 def load_schedule() -> dict:
@@ -43,7 +45,45 @@ def save_schedule(data: dict):
     except Exception as e:
         logger.error(f"Failed to save schedule: {e}")
 
+def to_utc_iso(dt: datetime) -> str:
+    """Return ISO string with Z suffix so JavaScript parses it correctly as UTC."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# ── ACTIVITY LOG ─────────────────────────────────────────────────────────────
+def append_activity(level: str, message: str):
+    """Append a log entry to the activity log file."""
+    try:
+        logs = []
+        if ACTIVITY_LOG_FILE.exists():
+            logs = json.loads(ACTIVITY_LOG_FILE.read_text())
+        logs.append({
+            "time": to_utc_iso(datetime.utcnow()),
+            "level": level,   # info | ok | err | ai
+            "msg": message,
+        })
+        # Keep only last MAX_LOG_ENTRIES
+        logs = logs[-MAX_LOG_ENTRIES:]
+        ACTIVITY_LOG_FILE.write_text(json.dumps(logs))
+    except Exception as e:
+        logger.error(f"Failed to append activity log: {e}")
+
+def get_activity_log(limit: int = 100) -> list:
+    try:
+        if ACTIVITY_LOG_FILE.exists():
+            logs = json.loads(ACTIVITY_LOG_FILE.read_text())
+            return logs[-limit:]
+    except Exception:
+        pass
+    return []
+
+def clear_activity_log():
+    try:
+        ACTIVITY_LOG_FILE.write_text("[]")
+    except Exception:
+        pass
+
 def get_next_run_time(schedule: dict) -> datetime:
+    """Returns next run time as UTC datetime."""
     mode = schedule.get("mode")
     if mode == "interval":
         value = int(schedule.get("intervalValue", 1))
@@ -281,31 +321,43 @@ async def run_scheduled_job(schedule: dict):
     from_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
     logger.info(f"Scheduled job running for {email} — {from_date} to {to_date}")
+    append_activity("info", f"⏰ Scheduled run started — {from_date} → {to_date}")
 
     try:
         videos = fetch_videos_in_range(from_date, to_date)
         if not videos:
+            append_activity("err", "⚠ No earnings call videos found in last 24h")
             logger.info("No videos found in last 24h")
             return
 
+        append_activity("ok", f"✓ Found {len(videos)} earnings call(s)")
+
         analyses = []
-        for v in videos:
+        for i, v in enumerate(videos, 1):
+            append_activity("info", f"[{i}/{len(videos)}] Fetching transcript: {v['title']}")
             transcript = await fetch_transcript(v["video_id"])
             if not transcript:
+                append_activity("err", f"⚠ No transcript: {v['title']}")
                 logger.warning(f"No transcript: {v['title']}")
                 continue
+            append_activity("ai", f"✓ Got transcript ({round(len(transcript)/1000)}k chars) — running AI analysis...")
             prompt   = ANALYSIS_PROMPT.replace("{TRANSCRIPT}", transcript[:80000])
             analysis = await analyze_with_openrouter(prompt)
             analyses.append({**v, "analysis": analysis})
+            append_activity("ok", f"✓ Analysis complete: {v['title']}")
             await asyncio.sleep(1)
 
         valid = [a for a in analyses if a.get("analysis")]
+        append_activity("ai", f"Sending {len(valid)} email(s) to {email}...")
         for i, item in enumerate(valid, 1):
             send_single_email(email, item, i, len(valid), from_date, to_date)
+            append_activity("ok", f"📧 Email [{i}/{len(valid)}] sent: {item.get('title','')[:50]}")
             await asyncio.sleep(0.6)
 
+        append_activity("ok", f"✅ Pipeline complete — {len(valid)} emails sent to {email}")
         logger.info(f"Scheduled job complete — {len(valid)} emails sent to {email}")
     except Exception as e:
+        append_activity("err", f"✗ Scheduled job error: {str(e)[:100]}")
         logger.error(f"Scheduled job error: {e}")
 
 # ── BACKGROUND SCHEDULER LOOP ─────────────────────────────────────────────────
@@ -322,16 +374,16 @@ async def scheduler_loop():
             if not next_run_str:
                 continue
 
-            next_run = datetime.fromisoformat(next_run_str)
+            next_run = datetime.fromisoformat(next_run_str.replace("Z",""))
             if datetime.utcnow() >= next_run:
                 logger.info("Triggering scheduled analysis run...")
                 await run_scheduled_job(schedule)
 
                 # Calculate and save next run time
                 next_run = get_next_run_time(schedule)
-                schedule["next_run"]  = next_run.isoformat()
+                schedule["next_run"]  = to_utc_iso(next_run)
                 schedule["run_count"] = schedule.get("run_count", 0) + 1
-                schedule["last_run"]  = datetime.utcnow().isoformat()
+                schedule["last_run"]  = to_utc_iso(datetime.utcnow())
                 save_schedule(schedule)
                 logger.info(f"Next run scheduled for {next_run}")
         except Exception as e:
@@ -432,11 +484,11 @@ async def set_schedule(request: Request):
         "intervalUnit":  body.get("intervalUnit", "hour"),
         "dailyTime":     body.get("dailyTime", "08:00"),
         "run_count":     0,
-        "created_at":    datetime.utcnow().isoformat(),
+        "created_at":    to_utc_iso(datetime.utcnow()),
         "last_run":      None,
     }
     next_run = get_next_run_time(schedule)
-    schedule["next_run"] = next_run.isoformat()
+    schedule["next_run"] = to_utc_iso(next_run)
     save_schedule(schedule)
     logger.info(f"Schedule set: {mode} for {email}, next run {next_run}")
     return {"success": True, "schedule": schedule}
@@ -445,6 +497,16 @@ async def set_schedule(request: Request):
 def delete_schedule():
     save_schedule({"active": False})
     return {"success": True, "message": "Schedule cancelled"}
+
+@app.get("/api/logs")
+def get_logs(limit: int = 100):
+    """Return recent activity log entries for any browser to poll."""
+    return {"logs": get_activity_log(limit)}
+
+@app.delete("/api/logs")
+def clear_logs():
+    clear_activity_log()
+    return {"success": True, "message": "Logs cleared"}
 
 @app.get("/debug/videos")
 def debug_videos():
