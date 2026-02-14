@@ -283,3 +283,35 @@ def debug_videos():
         return {"status": "ok", "count": len(videos), "videos": videos[:5]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/analyze")
+async def analyze(request: Request):
+    body   = await request.json()
+    prompt = body.get("prompt", "")
+
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer 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",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://earnings-intelligence-api.onrender.com",
+                },
+                json={
+                    "model": "deepseek/deepseek-chat-v3-0324:free",
+                    "max_tokens": 4096,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:200]}")
+        data     = resp.json()
+        analysis = data["choices"][0]["message"]["content"]
+        return {"success": True, "analysis": analysis}
+    except Exception as e:
+        logger.error(f"analyze error: {e}")
+        raise HTTPException(500, str(e))
