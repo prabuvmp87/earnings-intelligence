@@ -1,14 +1,13 @@
 """
-Earnings Intelligence — Backend API v4
-Uses YouTube Data API v3 (free, no bot issues) to fetch videos.
+Earnings Intelligence — Backend API v5
+- YouTube Data API v3 for video listing
+- OpenRouter (free models) for AI analysis
+- Resend API for email (one email per analysis)
 """
 
 import os
 import logging
-import smtplib
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -17,18 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
-SMTP_HOST       = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT       = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER       = os.getenv("SMTP_USER", "")
-SMTP_PASS       = os.getenv("SMTP_PASS", "")
-FROM_EMAIL      = os.getenv("FROM_EMAIL", SMTP_USER)
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
-
-# @trendlyne channel ID
+# ── CONFIG ────────────────────────────────────────────────────────────────────
+YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "")
 TRENDLYNE_CHANNEL_ID = "UCznm57tnYpUpc2q2FmO3R3Q"
 
-app = FastAPI(title="Earnings Intelligence API", version="4.0.0")
+app = FastAPI(title="Earnings Intelligence API", version="5.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,41 +31,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── YOUTUBE DATA API ─────────────────────────────────────────────────────────
-
-def get_channel_id(api_key: str) -> str:
-    """Resolve @trendlyne handle to a channel ID."""
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "q": "trendlyne",
-        "type": "channel",
-        "key": api_key,
-        "maxResults": 5,
-    }
-    r = httpx.get(url, params=params, timeout=15)
-    data = r.json()
-    for item in data.get("items", []):
-        if "trendlyne" in item["snippet"].get("channelTitle", "").lower():
-            return item["snippet"]["channelId"]
-    # fallback — return known ID
-    return TRENDLYNE_CHANNEL_ID
-
-
+# ── YOUTUBE ───────────────────────────────────────────────────────────────────
 def fetch_videos_in_range(from_date: str, to_date: str) -> list:
-    """
-    Fetch all videos from @trendlyne channel between from_date and to_date.
-    Uses YouTube Data API v3 search endpoint.
-    from_date / to_date: YYYY-MM-DD strings
-    """
     if not YOUTUBE_API_KEY:
-        raise RuntimeError("YOUTUBE_API_KEY environment variable not set")
+        raise RuntimeError("YOUTUBE_API_KEY not set")
 
-    # Convert dates to RFC 3339 format required by YouTube API
     published_after  = f"{from_date}T00:00:00Z"
     published_before = f"{to_date}T23:59:59Z"
-
-    url = "https://www.googleapis.com/youtube/v3/search"
     videos = []
     next_page_token = None
 
@@ -89,21 +55,19 @@ def fetch_videos_in_range(from_date: str, to_date: str) -> list:
         if next_page_token:
             params["pageToken"] = next_page_token
 
-        r = httpx.get(url, params=params, timeout=15)
+        r = httpx.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=15)
         data = r.json()
 
         if "error" in data:
             raise RuntimeError(f"YouTube API error: {data['error']['message']}")
 
         for item in data.get("items", []):
-            snippet   = item.get("snippet", {})
-            video_id  = item.get("id", {}).get("videoId", "")
-            title     = snippet.get("title", "")
-            published = snippet.get("publishedAt", "")[:10]  # YYYY-MM-DD
-
+            snippet  = item.get("snippet", {})
+            video_id = item.get("id", {}).get("videoId", "")
+            title    = snippet.get("title", "")
+            published = snippet.get("publishedAt", "")[:10]
             try:
-                pub_date = datetime.strptime(published, "%Y-%m-%d")
-                pub_display = pub_date.strftime("%d %b %Y")
+                pub_display = datetime.strptime(published, "%Y-%m-%d").strftime("%d %b %Y")
             except ValueError:
                 pub_display = published
 
@@ -120,10 +84,7 @@ def fetch_videos_in_range(from_date: str, to_date: str) -> list:
         if not next_page_token:
             break
 
-    # Sort newest first
     videos.sort(key=lambda x: x["published_raw"], reverse=True)
-
-    # Clean up internal field
     for v in videos:
         v.pop("published_raw", None)
 
@@ -131,86 +92,103 @@ def fetch_videos_in_range(from_date: str, to_date: str) -> list:
     return videos
 
 
-def get_transcript(video_id: str) -> str:
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        ytt = YouTubeTranscriptApi()
-        try:
-            fetched = ytt.fetch(video_id, languages=["en", "en-IN"])
-        except Exception:
-            fetched = ytt.fetch(video_id)
-        text = " ".join(seg.text.strip() for seg in fetched if seg.text)
-        logger.info(f"Transcript fetched for {video_id}: {len(text)} chars")
-        return text
-    except Exception as e:
-        logger.warning(f"No transcript for {video_id}: {e}")
-        return ""
+# ── AI ANALYSIS ───────────────────────────────────────────────────────────────
+async def analyze_with_openrouter(prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://earnings-intelligence-api.onrender.com",
+            },
+            json={
+                "model": "openrouter/auto",
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:200]}")
+    return resp.json()["choices"][0]["message"]["content"]
 
-# ── EMAIL ─────────────────────────────────────────────────────────────────────
-def send_email_report(to_email, analyses, from_date, to_date):
-    if not SMTP_USER or not SMTP_PASS:
-        raise RuntimeError("SMTP_USER / SMTP_PASS not configured")
 
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+# ── EMAIL (one per analysis via Resend) ───────────────────────────────────────
+def build_email_html(item: dict, index: int, total: int, from_date: str, to_date: str) -> str:
+    title    = item.get("title", "Unknown")
+    pub_date = item.get("published_date", "N/A")
+    url      = item.get("url", "#")
+    analysis = item.get("analysis", "No analysis available.")
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
 <style>
 body{{font-family:Georgia,serif;background:#f8f8f8;color:#1a1a1a;margin:0;padding:0}}
 .wrapper{{max-width:820px;margin:0 auto;background:#fff}}
-.hdr{{background:#0a0a0f;color:#e8ff47;padding:40px;text-align:center}}
-.hdr h1{{font-size:26px;margin:0 0 8px}}
-.hdr p{{color:#888;font-size:12px;margin:0;font-family:monospace}}
-.bar{{background:#f0f0f0;padding:14px 40px;font-size:12px;color:#555;font-family:monospace;border-bottom:1px solid #ddd}}
-.sec{{padding:36px 40px;border-bottom:2px solid #e8e8e8}}
-.vtitle{{font-size:20px;font-weight:bold;color:#0a0a0f;margin-bottom:6px}}
-.vmeta{{font-size:12px;color:#888;font-family:monospace;margin-bottom:22px}}
-.vmeta a{{color:#0066cc}}
-.body{{font-size:14px;line-height:1.9;white-space:pre-wrap;color:#333}}
-.footer{{padding:24px 40px;text-align:center;font-size:11px;color:#aaa;font-family:monospace}}
-</style></head><body><div class="wrapper">
-<div class="hdr"><h1>📊 Earnings Intelligence Report</h1>
-<p>AI-Powered Equity Analysis · Trendlyne YouTube Earnings Calls</p></div>
-<div class="bar">Period: {from_date} → {to_date} &nbsp;|&nbsp; Calls: {len(analyses)} &nbsp;|&nbsp; Generated: {datetime.now().strftime("%d %b %Y %H:%M UTC")}</div>"""
+.hdr{{background:#0a0a0f;color:#e8ff47;padding:32px 40px}}
+.hdr h1{{font-size:22px;margin:0 0 6px;font-family:monospace}}
+.hdr p{{color:#888;font-size:11px;margin:0;font-family:monospace}}
+.badge{{display:inline-block;background:rgba(232,255,71,0.15);border:1px solid rgba(232,255,71,0.3);
+  color:#e8ff47;font-size:10px;padding:3px 10px;border-radius:4px;
+  font-family:monospace;letter-spacing:1px;margin-bottom:12px}}
+.meta{{background:#f0f0f0;padding:12px 40px;font-size:12px;color:#555;
+  font-family:monospace;border-bottom:1px solid #ddd}}
+.meta a{{color:#0066cc}}
+.body{{padding:32px 40px;font-size:14px;line-height:1.9;white-space:pre-wrap;color:#333}}
+.footer{{padding:20px 40px;text-align:center;font-size:11px;color:#aaa;
+  font-family:monospace;border-top:1px solid #eee}}
+</style></head>
+<body><div class="wrapper">
+<div class="hdr">
+  <div class="badge">📊 EARNINGS ANALYSIS {index} of {total}</div>
+  <h1>{title}</h1>
+  <p>AI-Powered Equity Analysis · Trendlyne · {from_date} to {to_date}</p>
+</div>
+<div class="meta">
+  Published: {pub_date} &nbsp;|&nbsp;
+  <a href="{url}">▶ Watch on YouTube</a> &nbsp;|&nbsp;
+  Generated: {datetime.now().strftime("%d %b %Y %H:%M UTC")}
+</div>
+<div class="body">{analysis}</div>
+<div class="footer">
+  Auto-generated AI analysis of public earnings call transcripts.<br>
+  Not financial advice. Conduct your own due diligence.<br><br>
+  Earnings Intelligence · Open Source
+</div>
+</div></body></html>"""
 
-    for i, item in enumerate(analyses, 1):
-        html += f"""
-<div class="sec">
-<div class="vtitle">{i}. {item.get('title','Unknown')}</div>
-<div class="vmeta">Published: {item.get('published_date','N/A')} &nbsp;|&nbsp;
-<a href="{item.get('url','#')}">Watch on YouTube ↗</a></div>
-<div class="body">{item.get('analysis','No analysis available.')}</div>
-</div>"""
 
-    html += """<div class="footer">Auto-generated AI analysis of public earnings call transcripts.<br>
-Not financial advice. Conduct your own due diligence.<br><br>Earnings Intelligence · Open Source
-</div></div></body></html>"""
+def send_single_email(to_email: str, item: dict, index: int, total: int, from_date: str, to_date: str):
+    if not RESEND_API_KEY:
+        raise RuntimeError("RESEND_API_KEY not configured")
 
-    plain = f"EARNINGS INTELLIGENCE REPORT\n{'='*50}\nPeriod: {from_date} to {to_date}\n\n"
-    for i, item in enumerate(analyses, 1):
-        plain += f"\n{'='*50}\n{i}. {item.get('title')}\n{item.get('url')}\n\n{item.get('analysis','N/A')}\n"
+    title   = item.get("title", "Unknown")
+    html    = build_email_html(item, index, total, from_date, to_date)
+    subject = f"📊 [{index}/{total}] {title} — Earnings Analysis"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📊 Earnings Report — {len(analyses)} Calls ({from_date} to {to_date})"
-    msg["From"]    = FROM_EMAIL
-    msg["To"]      = to_email
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(html, "html"))
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(FROM_EMAIL, to_email, msg.as_string())
-    except Exception:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as s:
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(FROM_EMAIL, to_email, msg.as_string())
-    logger.info(f"Email sent to {to_email}")
+    response = httpx.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": "Earnings Intelligence <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+        },
+        timeout=30,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"Resend error: {response.text}")
+    logger.info(f"Email [{index}/{total}] sent to {to_email}: {title}")
 
 
 # ── ROUTES ────────────────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"service": "Earnings Intelligence API", "status": "ok", "version": "4.0.0"}
+    return {"service": "Earnings Intelligence API", "status": "ok", "version": "5.0.0"}
 
 
 @app.get("/health")
@@ -220,13 +198,11 @@ def health():
 
 @app.post("/api/fetch-videos")
 async def fetch_videos(request: Request):
-    body         = await request.json()
-    from_date    = body.get("from_date", "")
-    to_date      = body.get("to_date", "")
-
+    body      = await request.json()
+    from_date = body.get("from_date", "")
+    to_date   = body.get("to_date", "")
     if not from_date or not to_date:
         raise HTTPException(400, "from_date and to_date required")
-
     try:
         videos = fetch_videos_in_range(from_date, to_date)
         return {"success": True, "count": len(videos), "videos": videos}
@@ -235,32 +211,20 @@ async def fetch_videos(request: Request):
         raise HTTPException(500, str(e))
 
 
-@app.post("/api/get-transcript/{video_id}")
-def get_video_transcript(video_id: str):
+@app.post("/api/analyze")
+async def analyze(request: Request):
+    body   = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        ytt = YouTubeTranscriptApi()
-        try:
-            fetched = ytt.fetch(video_id, languages=["en", "en-IN"])
-        except Exception:
-            fetched = ytt.fetch(video_id)
-        text = " ".join(seg.text.strip() for seg in fetched if seg.text)
-        logger.info(f"Transcript fetched for {video_id}: {len(text)} chars")
-        return {
-            "success": True,
-            "video_id": video_id,
-            "transcript": text,
-            "length": len(text),
-        }
+        analysis = await analyze_with_openrouter(prompt)
+        return {"success": True, "analysis": analysis}
     except Exception as e:
-        logger.warning(f"No transcript for {video_id}: {e}")
-        return {
-            "success": False,
-            "video_id": video_id,
-            "transcript": "",
-            "length": 0,
-        }
-        
+        logger.error(f"analyze error: {e}")
+        raise HTTPException(500, str(e))
+
+
 @app.post("/api/send-report")
 async def send_report(request: Request):
     body      = await request.json()
@@ -272,52 +236,36 @@ async def send_report(request: Request):
     if not email or not analyses:
         raise HTTPException(400, "email and analyses required")
 
-    try:
-        send_email_report(email, analyses, from_date, to_date)
-        return {"success": True, "message": f"Report sent to {email}"}
-    except Exception as e:
-        logger.error(f"send-report error: {e}")
-        raise HTTPException(500, str(e))
+    # Filter only successfully analyzed items
+    valid = [a for a in analyses if a.get("analysis") and "No transcript" not in a.get("analysis", "")]
+    total = len(valid)
+
+    if total == 0:
+        return {"success": False, "message": "No valid analyses to send"}
+
+    sent = 0
+    errors = []
+    for i, item in enumerate(valid, 1):
+        try:
+            send_single_email(email, item, i, total, from_date, to_date)
+            sent += 1
+        except Exception as e:
+            logger.error(f"Email error for {item.get('title')}: {e}")
+            errors.append(str(e))
+
+    return {
+        "success": sent > 0,
+        "sent": sent,
+        "total": total,
+        "errors": errors,
+        "message": f"Sent {sent}/{total} emails to {email}"
+    }
 
 
 @app.get("/debug/videos")
 def debug_videos():
-    """Test endpoint — returns latest 5 videos from channel."""
     try:
-        videos = fetch_videos_in_range("2026-02-01", "2026-02-13")
+        videos = fetch_videos_in_range("2026-02-01", "2026-02-14")
         return {"status": "ok", "count": len(videos), "videos": videos[:5]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
-@app.post("/api/analyze")
-async def analyze(request: Request):
-    body   = await request.json()
-    prompt = body.get("prompt", "")
-
-    if not prompt:
-        raise HTTPException(400, "prompt is required")
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY', '')}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://earnings-intelligence-api.onrender.com",
-                },
-                json={
-                    "model": "openrouter/auto",
-                    "max_tokens": 4096,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-        if resp.status_code != 200:
-            raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:200]}")
-        data     = resp.json()
-        analysis = data["choices"][0]["message"]["content"]
-        return {"success": True, "analysis": analysis}
-    except Exception as e:
-        logger.error(f"analyze error: {e}")
-        raise HTTPException(500, str(e))
