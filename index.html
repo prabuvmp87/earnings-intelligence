@@ -213,20 +213,29 @@ function App() {
         updateVideo(i, {status:"Analyzing"});
 
         try {
-          // Fetch transcript via Supadata API
+          // Fetch transcript via Supadata API (rotating keys)
           addLog(`Fetching transcript...`, "info");
           let transcript = "";
 
-          try {
-            const sdRes = await fetch(
-              `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
-              { headers: { "x-api-key": "sd_a96006039b0ec279e7ab80fb28098c82" } }
-            );
-            if (sdRes.ok) {
-              const sdData = await sdRes.json();
-              transcript = sdData.content || sdData.transcript || sdData.text || "";
-            }
-          } catch(e) { /* supadata failed */ }
+          const supadataKeys = [
+            "sd_a96006039b0ec279e7ab80fb28098c82",
+            "sd_9e4ca6a05a68b38c4e8dc5f04cb27a30",
+            "sd_91298bda05c18ac2de5b58b31567aabe",
+          ];
+
+          for (const key of supadataKeys) {
+            try {
+              const sdRes = await fetch(
+                `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
+                { headers: { "x-api-key": key } }
+              );
+              if (sdRes.ok) {
+                const sdData = await sdRes.json();
+                transcript = sdData.content || sdData.transcript || sdData.text || "";
+                if (transcript.length > 100) break;
+              }
+            } catch(e) { /* try next key */ }
+          }
 
           if (!transcript) {
             addLog(`⚠ No transcript for: ${v.title}`, "err");
