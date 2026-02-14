@@ -11,7 +11,6 @@ import json
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -26,24 +25,89 @@ YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "")
 TRENDLYNE_CHANNEL_ID = "UCznm57tnYpUpc2q2FmO3R3Q"
-SCHEDULE_FILE      = Path("/tmp/ei_schedule.json")
-ACTIVITY_LOG_FILE  = Path("/tmp/ei_activity.json")
+JSONBIN_API_KEY    = os.getenv("JSONBIN_API_KEY", "")
+JSONBIN_SCHEDULE_BIN = os.getenv("JSONBIN_SCHEDULE_BIN", "")   # set after first create
+JSONBIN_LOGS_BIN     = os.getenv("JSONBIN_LOGS_BIN", "")       # set after first create
 MAX_LOG_ENTRIES    = 200
+JSONBIN_BASE       = "https://api.jsonbin.io/v3"
+
+# ── JSONBIN STORE ─────────────────────────────────────────────────────────────
+JSONBIN_HEADERS = {
+    "Content-Type": "application/json",
+    "X-Master-Key": "$2a$10$bD4cfepRAvt78BXnQtdZs.KXPjGmCIkcq2J8Jo9xYVExCwml9FHnW",
+    "X-Bin-Private": "false",
+}
+
+def _bin_id(env_key: str) -> str:
+    return os.getenv(env_key, "")
+
+def _create_bin(name: str, data: dict) -> str:
+    """Create a new JSONBin and return its ID."""
+    r = httpx.post(
+        f"{JSONBIN_BASE}/b",
+        headers={**JSONBIN_HEADERS, "X-Bin-Name": name},
+        json=data, timeout=15,
+    )
+    if r.status_code in (200, 201):
+        bin_id = r.json()["metadata"]["id"]
+        logger.info(f"Created JSONBin '{name}': {bin_id}")
+        return bin_id
+    logger.error(f"Failed to create bin '{name}': {r.text}")
+    return ""
+
+def _read_bin(bin_id: str) -> dict:
+    r = httpx.get(f"{JSONBIN_BASE}/b/{bin_id}/latest",
+                  headers=JSONBIN_HEADERS, timeout=15)
+    if r.status_code == 200:
+        return r.json().get("record", {})
+    return {}
+
+def _write_bin(bin_id: str, data: dict) -> bool:
+    r = httpx.put(f"{JSONBIN_BASE}/b/{bin_id}",
+                  headers=JSONBIN_HEADERS, json=data, timeout=15)
+    return r.status_code == 200
 
 # ── SCHEDULER STORE ───────────────────────────────────────────────────────────
+_schedule_bin_id = ""
+_logs_bin_id     = ""
+
+def _get_schedule_bin() -> str:
+    global _schedule_bin_id
+    if _schedule_bin_id:
+        return _schedule_bin_id
+    _schedule_bin_id = os.getenv("JSONBIN_SCHEDULE_BIN", "")
+    if not _schedule_bin_id:
+        # Auto-create on first run
+        _schedule_bin_id = _create_bin("ei-schedule", {"active": False})
+        logger.info(f"Add to Render env: JSONBIN_SCHEDULE_BIN={_schedule_bin_id}")
+    return _schedule_bin_id
+
+def _get_logs_bin() -> str:
+    global _logs_bin_id
+    if _logs_bin_id:
+        return _logs_bin_id
+    _logs_bin_id = os.getenv("JSONBIN_LOGS_BIN", "")
+    if not _logs_bin_id:
+        _logs_bin_id = _create_bin("ei-logs", {"logs": []})
+        logger.info(f"Add to Render env: JSONBIN_LOGS_BIN={_logs_bin_id}")
+    return _logs_bin_id
+
 def load_schedule() -> dict:
     try:
-        if SCHEDULE_FILE.exists():
-            return json.loads(SCHEDULE_FILE.read_text())
-    except Exception:
-        pass
+        bin_id = _get_schedule_bin()
+        if bin_id:
+            return _read_bin(bin_id) or {"active": False}
+    except Exception as e:
+        logger.error(f"load_schedule error: {e}")
     return {"active": False}
 
 def save_schedule(data: dict):
     try:
-        SCHEDULE_FILE.write_text(json.dumps(data, default=str))
+        bin_id = _get_schedule_bin()
+        if bin_id:
+            _write_bin(bin_id, data)
     except Exception as e:
-        logger.error(f"Failed to save schedule: {e}")
+        logger.error(f"save_schedule error: {e}")
 
 def to_utc_iso(dt: datetime) -> str:
     """Return ISO string with Z suffix so JavaScript parses it correctly as UTC."""
@@ -51,36 +115,41 @@ def to_utc_iso(dt: datetime) -> str:
 
 # ── ACTIVITY LOG ─────────────────────────────────────────────────────────────
 def append_activity(level: str, message: str):
-    """Append a log entry to the activity log file."""
+    """Append a log entry to JSONBin activity log."""
     try:
-        logs = []
-        if ACTIVITY_LOG_FILE.exists():
-            logs = json.loads(ACTIVITY_LOG_FILE.read_text())
+        bin_id = _get_logs_bin()
+        if not bin_id:
+            return
+        data = _read_bin(bin_id) or {"logs": []}
+        logs = data.get("logs", [])
         logs.append({
-            "time": to_utc_iso(datetime.utcnow()),
-            "level": level,   # info | ok | err | ai
-            "msg": message,
+            "time":  to_utc_iso(datetime.utcnow()),
+            "level": level,
+            "msg":   message,
         })
-        # Keep only last MAX_LOG_ENTRIES
         logs = logs[-MAX_LOG_ENTRIES:]
-        ACTIVITY_LOG_FILE.write_text(json.dumps(logs))
+        _write_bin(bin_id, {"logs": logs})
     except Exception as e:
-        logger.error(f"Failed to append activity log: {e}")
+        logger.error(f"append_activity error: {e}")
 
 def get_activity_log(limit: int = 100) -> list:
     try:
-        if ACTIVITY_LOG_FILE.exists():
-            logs = json.loads(ACTIVITY_LOG_FILE.read_text())
+        bin_id = _get_logs_bin()
+        if bin_id:
+            data = _read_bin(bin_id) or {"logs": []}
+            logs = data.get("logs", [])
             return logs[-limit:]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"get_activity_log error: {e}")
     return []
 
 def clear_activity_log():
     try:
-        ACTIVITY_LOG_FILE.write_text("[]")
-    except Exception:
-        pass
+        bin_id = _get_logs_bin()
+        if bin_id:
+            _write_bin(bin_id, {"logs": []})
+    except Exception as e:
+        logger.error(f"clear_activity_log error: {e}")
 
 def get_next_run_time(schedule: dict) -> datetime:
     """Returns next run time as UTC datetime."""
@@ -324,13 +393,15 @@ async def run_scheduled_job(schedule: dict):
     append_activity("info", f"⏰ Scheduled run started — {from_date} → {to_date}")
 
     try:
-        videos = fetch_videos_in_range(from_date, to_date)
+        all_videos = fetch_videos_in_range(from_date, to_date)
+        # Filter only earnings call videos
+        videos = [v for v in all_videos if "earnings call" in v.get("title","").lower()]
         if not videos:
-            append_activity("err", "⚠ No earnings call videos found in last 24h")
-            logger.info("No videos found in last 24h")
+            append_activity("err", f"⚠ No earnings call videos found in last 24h (skipped {len(all_videos)} non-earnings videos)")
+            logger.info("No earnings call videos found in last 24h")
             return
 
-        append_activity("ok", f"✓ Found {len(videos)} earnings call(s)")
+        append_activity("ok", f"✓ Found {len(videos)} earnings call(s) (filtered from {len(all_videos)} total videos)")
 
         analyses = []
         for i, v in enumerate(videos, 1):
