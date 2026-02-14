@@ -202,6 +202,47 @@ function App() {
   const addLog = (msg, type="msg") => setLogs(p=>[...p,{time:ts(),msg,type}]);
   const updateVideo = (idx, patch) => setVideos(p=>p.map((v,i)=>i===idx?{...v,...patch}:v));
 
+  // Poll backend logs every 5s to show server-side activity from any device
+  const lastLogTimeRef = useRef(null);
+  useEffect(() => {
+    async function pollLogs() {
+      try {
+        const r = await fetch(`${API_BASE}/api/logs?limit=50`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const entries = data.logs || [];
+        if (!entries.length) return;
+        const newest = entries[entries.length - 1].time;
+        if (newest === lastLogTimeRef.current) return; // no new entries
+        // Find new entries since last poll
+        const lastTime = lastLogTimeRef.current;
+        const newEntries = lastTime
+          ? entries.filter(e => e.time > lastTime)
+          : entries;
+        if (newEntries.length > 0) {
+          setLogs(prev => {
+            const existing = new Set(prev.map(l => l._id));
+            const toAdd = newEntries
+              .filter(e => !existing.has(e.time))
+              .map(e => ({
+                time: new Date(e.time).toLocaleTimeString("en-US",{hour12:false}),
+                type: e.level,
+                msg: e.msg,
+                _id: e.time,
+                _server: true,
+              }));
+            return toAdd.length ? [...prev, ...toAdd] : prev;
+          });
+          lastLogTimeRef.current = newest;
+        }
+      } catch(e) { /* silent */ }
+    }
+    // Poll immediately then every 5s
+    pollLogs();
+    const interval = setInterval(pollLogs, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Load schedule from cloud backend on page load
   useEffect(() => {
     async function loadSchedule() {
@@ -655,7 +696,7 @@ function App() {
         )}
 
         {/* Terminal */}
-        {logs.length>0 && (
+        {(logs.length>0 || scheduleActive) && (
           <div style={{background:"#08080f",border:"1px solid #1e1e2e",borderRadius:8,overflow:"hidden",marginBottom:24}}>
             <div style={{padding:"10px 16px",background:"#111118",borderBottom:"1px solid #1e1e2e",
               display:"flex",alignItems:"center",gap:12,fontSize:11,color:"#555",fontFamily:"'DM Mono',monospace"}}>
@@ -664,7 +705,18 @@ function App() {
                   <div key={c} style={{width:10,height:10,borderRadius:"50%",background:c}}/>
                 ))}
               </div>
-              <span>earnings-analyzer.log</span>
+              <span style={{flex:1}}>earnings-analyzer.log &nbsp;
+                <span style={{color:"#2ed573",fontSize:9,letterSpacing:1}}>● LIVE</span>
+              </span>
+              <button onClick={async()=>{
+                await fetch(`${API_BASE}/api/logs`,{method:"DELETE"});
+                setLogs([]);
+                lastLogTimeRef.current = null;
+              }} style={{background:"none",border:"1px solid #1e1e2e",color:"#555",
+                borderRadius:4,padding:"2px 8px",cursor:"pointer",fontSize:10,
+                fontFamily:"'DM Mono',monospace"}}>
+                Clear
+              </button>
             </div>
             <div ref={logsRef} style={{padding:"16px 20px",maxHeight:280,overflowY:"auto"}}>
               {logs.map((l,i)=>(
