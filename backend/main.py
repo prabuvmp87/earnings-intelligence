@@ -123,33 +123,85 @@ def build_email_html(item: dict, index: int, total: int, from_date: str, to_date
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <style>
-body{{font-family:Georgia,serif;background:#f8f8f8;color:#1a1a1a;margin:0;padding:0}}
-.wrapper{{max-width:820px;margin:0 auto;background:#fff}}
-.hdr{{background:#0a0a0f;color:#e8ff47;padding:32px 40px}}
-.hdr h1{{font-size:22px;margin:0 0 6px;font-family:monospace}}
-.hdr p{{color:#888;font-size:11px;margin:0;font-family:monospace}}
-.badge{{display:inline-block;background:rgba(232,255,71,0.15);border:1px solid rgba(232,255,71,0.3);
-  color:#e8ff47;font-size:10px;padding:3px 10px;border-radius:4px;
-  font-family:monospace;letter-spacing:1px;margin-bottom:12px}}
-.meta{{background:#f0f0f0;padding:12px 40px;font-size:12px;color:#555;
-  font-family:monospace;border-bottom:1px solid #ddd}}
-.meta a{{color:#0066cc}}
-.body{{padding:32px 40px;font-size:14px;line-height:1.9;white-space:pre-wrap;color:#333}}
+body{{font-family:'Segoe UI',Arial,sans-serif;background:#f4f4f8;color:#1a1a2e;margin:0;padding:0}}
+.wrapper{{max-width:860px;margin:0 auto;background:#fff;box-shadow:0 2px 20px rgba(0,0,0,0.08)}}
+.hdr{{background:linear-gradient(135deg,#0a0a0f 0%,#1a1a3e 100%);color:#e8ff47;padding:32px 40px}}
+.hdr-badge{{display:inline-block;background:rgba(232,255,71,0.15);border:1px solid rgba(232,255,71,0.4);
+  color:#e8ff47;font-size:10px;padding:4px 12px;border-radius:20px;font-family:monospace;
+  letter-spacing:2px;margin-bottom:14px;text-transform:uppercase}}
+.hdr h1{{font-size:24px;margin:0 0 8px;font-weight:700;line-height:1.3}}
+.hdr p{{color:#aaa;font-size:12px;margin:0;font-family:monospace}}
+.meta{{background:#f8f9ff;padding:12px 40px;font-size:12px;color:#666;
+  border-bottom:2px solid #e8ff47;display:flex;gap:20px;flex-wrap:wrap}}
+.meta a{{color:#4444ff;text-decoration:none;font-weight:600}}
+.content{{padding:0 40px 32px}}
+/* Report sections */
+.report .section{{margin:24px 0;border-radius:8px;overflow:hidden;
+  border:1px solid #e8e8f0}}
+.section-title{{background:#1a1a3e;color:#e8ff47;padding:12px 20px;
+  font-size:13px;font-weight:700;letter-spacing:0.5px}}
+/* Color coded items */
+.item{{padding:10px 20px;font-size:13px;line-height:1.7;border-bottom:1px solid #f0f0f8}}
+.item.green{{background:#f0fff4;border-left:4px solid #2ed573}}
+.item.red{{background:#fff5f5;border-left:4px solid #ff4757}}
+.item.grey{{background:#f8f8f8;border-left:4px solid #aaa}}
+/* Rating box */
+.rating-box{{padding:14px 20px;font-size:14px;font-weight:700;text-align:center;letter-spacing:1px}}
+.rating-box.strong-buy{{background:#e8fff0;color:#00a651;border-left:4px solid #00a651}}
+.rating-box.buy{{background:#f0fff4;color:#2ed573;border-left:4px solid #2ed573}}
+.rating-box.hold{{background:#fffdf0;color:#f4a100;border-left:4px solid #f4a100}}
+.rating-box.avoid{{background:#fff5f5;color:#ff4757;border-left:4px solid #ff4757}}
+/* Verdict */
+.verdict-box{{background:#f8f9ff;padding:14px 20px;font-size:13px;
+  border-left:4px solid #4444ff;font-style:italic}}
+/* Strategic check grid */
+.check-grid{{display:grid;grid-template-columns:1fr 1fr;gap:0}}
+.check{{padding:10px 20px;font-size:12px;border-bottom:1px solid #f0f0f8;border-right:1px solid #f0f0f8}}
+.check.yes{{background:#f0fff4;border-left:3px solid #2ed573}}
+.check.no{{background:#fff5f5;border-left:3px solid #ff4757}}
+.check.partial{{background:#fffdf0;border-left:3px solid #f4a100}}
+/* Tables */
+.catalyst-table,.summary-table{{width:100%;border-collapse:collapse;font-size:12px}}
+.catalyst-table th,.summary-table th{{background:#1a1a3e;color:#e8ff47;padding:10px 14px;text-align:left;font-size:11px;letter-spacing:1px}}
+.catalyst-table td,.summary-table td{{padding:9px 14px;border-bottom:1px solid #f0f0f8;vertical-align:top;line-height:1.5}}
+.catalyst-table tr.pos{{background:#f0fff4}}
+.catalyst-table tr.pos td:nth-child(2){{color:#00a651;font-weight:700}}
+.catalyst-table tr.neg{{background:#fff5f5}}
+.catalyst-table tr.neg td:nth-child(2){{color:#ff4757;font-weight:700}}
+.catalyst-table tr.neu{{background:#f8f8f8}}
+.catalyst-table tr.neu td:nth-child(2){{color:#888;font-weight:700}}
+.summary-table tr:nth-child(even){{background:#f8f9ff}}
+/* Positives/Negatives/Neutrals */
+.positives{{background:#f0fff4;border-left:4px solid #2ed573;padding:12px 20px;margin:8px 0;font-size:13px;line-height:1.7}}
+.negatives{{background:#fff5f5;border-left:4px solid #ff4757;padding:12px 20px;margin:8px 0;font-size:13px;line-height:1.7}}
+.neutrals{{background:#f8f8f8;border-left:4px solid #aaa;padding:12px 20px;margin:8px 0;font-size:13px;line-height:1.7}}
+/* Conclusion */
+.conclusion{{background:#f8f9ff}}
+.conclusion-item{{padding:10px 20px;font-size:13px;border-bottom:1px solid #eef;line-height:1.7}}
+.verdict-final{{padding:16px 20px;font-size:15px;font-weight:700;text-align:center;letter-spacing:1px;margin:4px 0}}
+.verdict-final.strong-buy{{background:#e8fff0;color:#00a651}}
+.verdict-final.buy{{background:#f0fff4;color:#2ed573}}
+.verdict-final.hold{{background:#fffdf0;color:#f4a100}}
+.verdict-final.avoid{{background:#fff5f5;color:#ff4757}}
+.analyst-view{{background:#fff;padding:16px 20px;font-size:13px;line-height:1.8;
+  font-style:italic;color:#444;border-top:2px solid #e8ff47}}
 .footer{{padding:20px 40px;text-align:center;font-size:11px;color:#aaa;
-  font-family:monospace;border-top:1px solid #eee}}
+  background:#f4f4f8;border-top:1px solid #e8e8f0}}
 </style></head>
 <body><div class="wrapper">
 <div class="hdr">
-  <div class="badge">📊 EARNINGS ANALYSIS {index} of {total}</div>
+  <div class="hdr-badge">📊 Earnings Analysis {index} of {total}</div>
   <h1>{title}</h1>
-  <p>AI-Powered Equity Analysis · Trendlyne · {from_date} to {to_date}</p>
+  <p>AI-Powered Equity Research · Trendlyne · Period: {from_date} to {to_date}</p>
 </div>
 <div class="meta">
-  Published: {pub_date} &nbsp;|&nbsp;
-  <a href="{url}">▶ Watch on YouTube</a> &nbsp;|&nbsp;
-  Generated: {datetime.now().strftime("%d %b %Y %H:%M UTC")}
+  <span>📅 Published: {pub_date}</span>
+  <span>⏱ Generated: {datetime.now().strftime("%d %b %Y %H:%M UTC")}</span>
+  <span><a href="{url}">▶ Watch on YouTube →</a></span>
 </div>
-<div class="body">{analysis}</div>
+<div class="content">
+{analysis}
+</div>
 <div class="footer">
   Auto-generated AI analysis of public earnings call transcripts.<br>
   Not financial advice. Conduct your own due diligence.<br><br>
@@ -243,14 +295,12 @@ async def send_report(request: Request):
     if total == 0:
         return {"success": False, "message": "No valid analyses to send"}
 
-    import asyncio
     sent = 0
     errors = []
     for i, item in enumerate(valid, 1):
         try:
             send_single_email(email, item, i, total, from_date, to_date)
             sent += 1
-            await asyncio.sleep(0.6)  # max ~1.6 emails/sec, safely under limit
         except Exception as e:
             logger.error(f"Email error for {item.get('title')}: {e}")
             errors.append(str(e))
