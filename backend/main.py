@@ -295,12 +295,14 @@ async def send_report(request: Request):
     if total == 0:
         return {"success": False, "message": "No valid analyses to send"}
 
+    import asyncio
     sent = 0
     errors = []
     for i, item in enumerate(valid, 1):
         try:
             send_single_email(email, item, i, total, from_date, to_date)
             sent += 1
+            await asyncio.sleep(0.6)  # max ~1.6 emails/sec, safely under limit
         except Exception as e:
             logger.error(f"Email error for {item.get('title')}: {e}")
             errors.append(str(e))
