@@ -155,118 +155,96 @@ function StatusBadge({ status }) {
 }
 
 function App() {
-  const today = new Date().toISOString().split("T")[0];
+  const today   = new Date().toISOString().split("T")[0];
   const weekAgo = new Date(Date.now()-7*86400000).toISOString().split("T")[0];
 
+  // Mode
+  const [mode, setMode] = useState("manual"); // manual | interval | daily
+
+  // Manual fields
   const [fromDate, setFromDate] = useState(weekAgo);
   const [toDate, setToDate]     = useState(today);
-  const [email, setEmail]       = useState("");
-  const [running, setRunning]   = useState(false);
-  const [logs, setLogs]         = useState([]);
-  const [videos, setVideos]     = useState([]);
-  const [progress, setProgress] = useState(0);
+
+  // Common
+  const [email, setEmail] = useState("");
+
+  // Interval config
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [intervalUnit, setIntervalUnit]   = useState("hour"); // minute | hour
+
+  // Daily config
+  const [dailyTime, setDailyTime] = useState("08:00");
+
+  // Schedule state
+  const [scheduleActive, setScheduleActive]   = useState(false);
+  const [scheduleDetails, setScheduleDetails] = useState(null); // {mode, label, nextRun, runCount}
+  const scheduleRef = useRef(null);
+
+  // Run state
+  const [running, setRunning]     = useState(false);
+  const [logs, setLogs]           = useState([]);
+  const [videos, setVideos]       = useState([]);
+  const [progress, setProgress]   = useState(0);
   const [emailSent, setEmailSent] = useState(false);
   const logsRef = useRef(null);
-
-  // Scheduler state
-  const [scheduleMode, setScheduleMode] = useState("manual"); // manual | interval | daily
-  const [intervalUnit, setIntervalUnit] = useState("hour");   // minute | hour
-  const [intervalValue, setIntervalValue] = useState(1);
-  const [dailyTime, setDailyTime] = useState("08:00");
-  const [scheduleActive, setScheduleActive] = useState(false);
-  const [nextRun, setNextRun] = useState(null);
-  const [runCount, setRunCount] = useState(0);
-  const scheduleRef = useRef(null);
-  const nextRunRef = useRef(null);
 
   useEffect(() => {
     if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight;
   }, [logs]);
 
-  // Cleanup scheduler on unmount
   useEffect(() => {
-    return () => {
-      if (scheduleRef.current) clearTimeout(scheduleRef.current);
-      if (nextRunRef.current) clearInterval(nextRunRef.current);
-    };
+    return () => { if (scheduleRef.current) clearTimeout(scheduleRef.current); };
   }, []);
 
   const ts = () => new Date().toLocaleTimeString("en-US",{hour12:false});
   const addLog = (msg, type="msg") => setLogs(p=>[...p,{time:ts(),msg,type}]);
   const updateVideo = (idx, patch) => setVideos(p=>p.map((v,i)=>i===idx?{...v,...patch}:v));
 
+  function getLast24h() {
+    const now  = new Date();
+    const past = new Date(Date.now()-24*60*60*1000);
+    return { from: past.toISOString().split("T")[0], to: now.toISOString().split("T")[0] };
+  }
+
   function getNextRunTime() {
-    if (scheduleMode === "interval") {
-      const ms = intervalUnit === "minute" ? intervalValue * 60000 : intervalValue * 3600000;
-      return new Date(Date.now() + ms);
+    if (mode==="interval") {
+      const ms = intervalUnit==="minute" ? intervalValue*60000 : intervalValue*3600000;
+      return new Date(Date.now()+ms);
     }
-    if (scheduleMode === "daily") {
-      const [h, m] = dailyTime.split(":").map(Number);
-      const next = new Date();
-      next.setHours(h, m, 0, 0);
-      if (next <= new Date()) next.setDate(next.getDate() + 1);
+    if (mode==="daily") {
+      const [h,m] = dailyTime.split(":").map(Number);
+      const next = new Date(); next.setHours(h,m,0,0);
+      if (next<=new Date()) next.setDate(next.getDate()+1);
       return next;
     }
     return null;
   }
 
-  function scheduleNext(runFn) {
-    const next = getNextRunTime();
-    if (!next) return;
-    setNextRun(next);
-    const delay = next - Date.now();
-    scheduleRef.current = setTimeout(async () => {
-      await runFn(true);
-      setRunCount(c => c + 1);
-      if (scheduleActive) scheduleNext(runFn);
-    }, delay);
+  function scheduleLabel() {
+    if (mode==="interval") return `Every ${intervalValue} ${intervalUnit}(s)`;
+    if (mode==="daily")    return `Daily at ${dailyTime}`;
+    return "";
   }
 
-  function startSchedule() {
-    if (!email) return alert("Please enter email first.");
-    setScheduleActive(true);
-    setRunCount(0);
-    addLog(`⏰ Scheduler started — ${scheduleMode === "interval" 
-      ? `every ${intervalValue} ${intervalUnit}(s)` 
-      : `daily at ${dailyTime}`}`, "info");
-    scheduleNext((isScheduled) => run(isScheduled));
-  }
+  async function runAnalysis(isScheduled=false) {
+    const dates = isScheduled ? getLast24h() : { from: fromDate, to: toDate };
 
-  function stopSchedule() {
-    setScheduleActive(false);
-    setNextRun(null);
-    if (scheduleRef.current) clearTimeout(scheduleRef.current);
-    addLog("⏹ Scheduler stopped.", "err");
-  }
-
-  async function run(isScheduled=false) {
-    // For scheduled runs, always use last 24 hours dynamically
-    let runFrom = fromDate;
-    let runTo   = toDate;
-    if (isScheduled) {
-      const now  = new Date();
-      const past = new Date(Date.now() - 24*60*60*1000);
-      runTo   = now.toISOString().split("T")[0];
-      runFrom = past.toISOString().split("T")[0];
-    }
-
-    if (!runFrom||!runTo||!email) return alert("Please fill all fields.");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return alert("Invalid email.");
+    if (!email) { alert("Please enter email."); return; }
+    if (!dates.from||!dates.to) { alert("Please set dates."); return; }
 
     setRunning(true); setLogs([]); setVideos([]); setProgress(0); setEmailSent(false);
 
-    addLog(isScheduled ? "⏰ Scheduled run triggered..." : "Initializing earnings intelligence pipeline...", "info");
-    addLog(`Date range: ${runFrom} → ${runTo}${isScheduled?" (last 24 hours)":""}`, "msg");
+    addLog(isScheduled?"⏰ Scheduled run triggered — fetching last 24 hours...":"Initializing earnings intelligence pipeline...","info");
+    addLog(`Date range: ${dates.from} → ${dates.to}${isScheduled?" (last 24 hours)":""}`, "msg");
     addLog(`Email: ${email}`, "msg");
 
     try {
       addLog("Connecting to @trendlyne YouTube channel...", "info");
       setProgress(10);
 
-      const vRes = await fetch(`${API_BASE}/api/fetch-videos`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({from_date:runFrom, to_date:runTo}),
+      const vRes = await fetch(`${API_BASE}/api/fetch-videos`,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({from_date:dates.from, to_date:dates.to}),
       });
       if (!vRes.ok) throw new Error(`Failed to fetch videos: ${vRes.statusText}`);
       const vData = await vRes.json();
@@ -289,20 +267,26 @@ function App() {
         updateVideo(i, {status:"Analyzing"});
 
         try {
-          // Fetch transcript via Supadata API
           addLog(`Fetching transcript...`, "info");
           let transcript = "";
-
-          try {
-            const sdRes = await fetch(
-              `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
-              { headers: { "x-api-key": "sd_a96006039b0ec279e7ab80fb28098c82" } }
-            );
-            if (sdRes.ok) {
-              const sdData = await sdRes.json();
-              transcript = sdData.content || sdData.transcript || sdData.text || "";
-            }
-          } catch(e) { /* supadata failed */ }
+          const supadataKeys = [
+            "sd_a96006039b0ec279e7ab80fb28098c82",
+            "sd_9e4ca6a05a68b38c4e8dc5f04cb27a30",
+            "sd_91298bda05c18ac2de5b58b31567aabe",
+          ];
+          for (const key of supadataKeys) {
+            try {
+              const sdRes = await fetch(
+                `https://api.supadata.ai/v1/youtube/transcript?videoId=${v.video_id}&text=true`,
+                { headers: { "x-api-key": key } }
+              );
+              if (sdRes.ok) {
+                const sdData = await sdRes.json();
+                transcript = sdData.content || sdData.transcript || sdData.text || "";
+                if (transcript.length>100) break;
+              }
+            } catch(e) {}
+          }
 
           if (!transcript) {
             addLog(`⚠ No transcript for: ${v.title}`, "err");
@@ -312,7 +296,7 @@ function App() {
           }
 
           addLog(`✓ Got transcript (${Math.round(transcript.length/1000)}k chars) — running AI analysis...`, "ai");
-          const analysis = await analyzeWithClaude(transcript, v.title);
+          const analysis = await analyzeWithAI(transcript, v.title);
           updateVideo(i, {status:"Done", analysis});
           analyses.push({...v, analysis});
           addLog(`✓ Analysis complete: ${v.title}`, "ok");
@@ -327,10 +311,9 @@ function App() {
 
       setProgress(92);
       addLog("Sending email report...", "ai");
-      const eRes = await fetch(`${API_BASE}/api/send-report`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({email, analyses, from_date:runFrom, to_date:runTo}),
+      const eRes = await fetch(`${API_BASE}/api/send-report`,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({email, analyses, from_date:dates.from, to_date:dates.to}),
       });
       if (!eRes.ok) throw new Error(`Email failed: ${eRes.statusText}`);
 
@@ -346,6 +329,41 @@ function App() {
     }
   }
 
+  function scheduleNext(count=0) {
+    const next = getNextRunTime();
+    if (!next) return;
+    const delay = next - Date.now();
+
+    setScheduleDetails(prev => ({...prev, nextRun: next, runCount: count}));
+
+    scheduleRef.current = setTimeout(async () => {
+      await runAnalysis(true);
+      scheduleNext(count+1);
+    }, delay);
+  }
+
+  function startSchedule() {
+    if (!email) return alert("Please enter your email first.");
+    setScheduleActive(true);
+    const next = getNextRunTime();
+    setScheduleDetails({ mode, label: scheduleLabel(), nextRun: next, runCount: 0 });
+    scheduleNext(0);
+    addLog(`⏰ Schedule started — ${scheduleLabel()}`, "info");
+    addLog(`Next run at: ${next.toLocaleString()}`, "msg");
+  }
+
+  function stopSchedule() {
+    if (scheduleRef.current) clearTimeout(scheduleRef.current);
+    setScheduleActive(false);
+    setScheduleDetails(null);
+    addLog("⏹ Schedule cancelled.", "err");
+  }
+
+  function editSchedule() {
+    stopSchedule();
+    setLogs([]);
+  }
+
   const inputStyle = {
     width:"100%", background:"rgba(255,255,255,0.03)", border:"1px solid #1e1e2e",
     borderRadius:6, padding:"11px 14px", color:"#f0f0f5",
@@ -353,8 +371,7 @@ function App() {
   };
   const labelStyle = {
     display:"block", fontSize:10, letterSpacing:2, color:"#555",
-    textTransform:"uppercase", marginBottom:8,
-    fontFamily:"Syne,sans-serif", fontWeight:700
+    textTransform:"uppercase", marginBottom:8, fontFamily:"Syne,sans-serif", fontWeight:700
   };
 
   return (
@@ -364,13 +381,10 @@ function App() {
       backgroundImage:"linear-gradient(rgba(232,255,71,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(232,255,71,0.025) 1px,transparent 1px)",
       backgroundSize:"56px 56px"
     }}>
-      {/* Glow orbs */}
       <div style={{position:"fixed",width:600,height:600,borderRadius:"50%",background:"#e8ff47",
-        filter:"blur(120px)",top:-200,right:-200,opacity:0.08,pointerEvents:"none",
-        animation:"drift1 12s ease-in-out infinite"}}/>
+        filter:"blur(120px)",top:-200,right:-200,opacity:0.08,pointerEvents:"none",animation:"drift1 12s ease-in-out infinite"}}/>
       <div style={{position:"fixed",width:400,height:400,borderRadius:"50%",background:"#47ffe8",
-        filter:"blur(120px)",bottom:-100,left:-100,opacity:0.08,pointerEvents:"none",
-        animation:"drift2 15s ease-in-out infinite"}}/>
+        filter:"blur(120px)",bottom:-100,left:-100,opacity:0.08,pointerEvents:"none",animation:"drift2 15s ease-in-out infinite"}}/>
 
       <div style={{maxWidth:820,margin:"0 auto",padding:"0 24px",position:"relative",zIndex:1}}>
 
@@ -389,16 +403,15 @@ function App() {
             Earnings<br/><em style={{color:"#e8ff47"}}>Intelligence</em>
           </h1>
           <p style={{fontSize:13,color:"#555",lineHeight:1.7,maxWidth:480}}>
-            Fetch @trendlyne earnings call transcripts, run deep AI equity analysis for free,
+            Fetch @trendlyne earnings call transcripts, run deep AI equity analysis,
             and receive a comprehensive report in your inbox.
           </p>
         </div>
 
         {/* Stats */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:1,
-          background:"#1e1e2e",border:"1px solid #1e1e2e",borderRadius:8,
-          overflow:"hidden",margin:"32px 0"}}>
-          {[["📺","Source","@trendlyne"],["🤖","AI Engine","OpenRouter (Free)"],["📧","Delivery","Email Report"]].map(([icon,label,val])=>(
+          background:"#1e1e2e",border:"1px solid #1e1e2e",borderRadius:8,overflow:"hidden",margin:"32px 0"}}>
+          {[["📺","Source","@trendlyne"],["🤖","AI Engine","OpenRouter (Free)"],["📧","Delivery","Per-Call Email"]].map(([icon,label,val])=>(
             <div key={label} style={{background:"#111118",padding:"18px 20px",textAlign:"center"}}>
               <div style={{fontSize:22,marginBottom:6}}>{icon}</div>
               <div style={{fontSize:10,letterSpacing:2,color:"#555",textTransform:"uppercase",
@@ -408,33 +421,115 @@ function App() {
           ))}
         </div>
 
-        {/* Form */}
+        {/* Main Form */}
         <div style={{background:"#111118",border:"1px solid #1e1e2e",borderRadius:12,
           padding:32,marginBottom:24,position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",top:0,left:0,right:0,height:1,
             background:"linear-gradient(90deg,transparent,rgba(232,255,71,0.4),transparent)"}}/>
-          <div style={{fontSize:10,letterSpacing:3,color:"#555",textTransform:"uppercase",
-            marginBottom:24,fontFamily:"Syne,sans-serif",fontWeight:700}}>
-            <span style={{color:"#e8ff47"}}>//&nbsp;</span>Configure Analysis Run
-          </div>
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-            <div>
-              <label style={labelStyle}>FROM DATE</label>
-              <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={inputStyle}/>
+          {/* ── STEP 1: RUN MODE ── */}
+          <div style={{marginBottom:28}}>
+            <label style={labelStyle}>
+              <span style={{color:"#e8ff47"}}>//&nbsp;</span>Step 1 — Select Run Mode
+            </label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+              {[
+                ["manual",  "▶",  "Manual",   "Run once with custom dates"],
+                ["interval","🔁", "Interval", "Repeat every X mins/hours"],
+                ["daily",   "📅", "Daily",    "Run once a day at set time"],
+              ].map(([m, icon, title, desc])=>(
+                <button key={m} onClick={()=>{setMode(m);if(scheduleActive)stopSchedule();}}
+                  style={{padding:"14px 10px",border:`1px solid ${mode===m?"#e8ff47":"#1e1e2e"}`,
+                    background:mode===m?"rgba(232,255,71,0.07)":"transparent",
+                    color:mode===m?"#e8ff47":"#555",borderRadius:8,cursor:"pointer",
+                    textAlign:"center",transition:"all 0.15s"}}>
+                  <div style={{fontSize:20,marginBottom:6}}>{icon}</div>
+                  <div style={{fontFamily:"Syne,sans-serif",fontSize:12,fontWeight:800,
+                    letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{title}</div>
+                  <div style={{fontSize:10,color:mode===m?"#888":"#333",lineHeight:1.4}}>{desc}</div>
+                </button>
+              ))}
             </div>
-            <div>
-              <label style={labelStyle}>TO DATE</label>
-              <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inputStyle}/>
-            </div>
           </div>
 
-          <div style={{marginBottom:20}}>
-            <label style={labelStyle}>RECIPIENT EMAIL</label>
-            <input type="email" placeholder="analyst@example.com" value={email}
-              onChange={e=>setEmail(e.target.value)} style={inputStyle}/>
+          {/* ── STEP 2: CONFIG ── */}
+          <div style={{marginBottom:24}}>
+            <label style={labelStyle}>
+              <span style={{color:"#e8ff47"}}>//&nbsp;</span>Step 2 — Configure
+            </label>
+
+            {/* MANUAL: date range + email */}
+            {mode==="manual" && (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                  <div>
+                    <label style={labelStyle}>FROM DATE</label>
+                    <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={inputStyle}/>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>TO DATE</label>
+                    <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inputStyle}/>
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>RECIPIENT EMAIL</label>
+                  <input type="email" placeholder="analyst@example.com" value={email}
+                    onChange={e=>setEmail(e.target.value)} style={inputStyle}/>
+                </div>
+              </>
+            )}
+
+            {/* INTERVAL: value + unit + email */}
+            {mode==="interval" && !scheduleActive && (
+              <>
+                <div style={{background:"rgba(232,255,71,0.04)",border:"1px solid rgba(232,255,71,0.15)",
+                  borderRadius:6,padding:"10px 14px",marginBottom:16,fontSize:11,color:"#888",lineHeight:1.6}}>
+                  📅 Dates are auto-set to <strong style={{color:"#e8ff47"}}>last 24 hours</strong> on each scheduled run.
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                  <div>
+                    <label style={labelStyle}>REPEAT EVERY</label>
+                    <input type="number" min={1} max={60} value={intervalValue}
+                      onChange={e=>setIntervalValue(Number(e.target.value))} style={inputStyle}/>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>UNIT</label>
+                    <select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value)}
+                      style={{...inputStyle,cursor:"pointer"}}>
+                      <option value="minute">Minutes</option>
+                      <option value="hour">Hours</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>RECIPIENT EMAIL</label>
+                  <input type="email" placeholder="analyst@example.com" value={email}
+                    onChange={e=>setEmail(e.target.value)} style={inputStyle}/>
+                </div>
+              </>
+            )}
+
+            {/* DAILY: time + email */}
+            {mode==="daily" && !scheduleActive && (
+              <>
+                <div style={{background:"rgba(232,255,71,0.04)",border:"1px solid rgba(232,255,71,0.15)",
+                  borderRadius:6,padding:"10px 14px",marginBottom:16,fontSize:11,color:"#888",lineHeight:1.6}}>
+                  📅 Dates are auto-set to <strong style={{color:"#e8ff47"}}>last 24 hours</strong> on each scheduled run.
+                </div>
+                <div style={{marginBottom:16}}>
+                  <label style={labelStyle}>RUN DAILY AT</label>
+                  <input type="time" value={dailyTime} onChange={e=>setDailyTime(e.target.value)} style={inputStyle}/>
+                </div>
+                <div>
+                  <label style={labelStyle}>RECIPIENT EMAIL</label>
+                  <input type="email" placeholder="analyst@example.com" value={email}
+                    onChange={e=>setEmail(e.target.value)} style={inputStyle}/>
+                </div>
+              </>
+            )}
           </div>
 
+          {/* Progress bar */}
           {running && (
             <div style={{background:"rgba(255,255,255,0.05)",borderRadius:2,height:3,marginBottom:16,overflow:"hidden"}}>
               <div style={{height:"100%",background:"linear-gradient(90deg,#e8ff47,#47ffe8)",
@@ -442,92 +537,96 @@ function App() {
             </div>
           )}
 
-          {/* Schedule Mode Selector */}
-          <div style={{marginBottom:16}}>
-            <label style={labelStyle}>RUN MODE</label>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-              {[["manual","▶ Manual"],["interval","🔁 Interval"],["daily","📅 Daily"]].map(([mode,label])=>(
-                <button key={mode} onClick={()=>{setScheduleMode(mode);if(scheduleActive)stopSchedule();}}
-                  style={{padding:"9px 4px",border:`1px solid ${scheduleMode===mode?"#e8ff47":"#1e1e2e"}`,
-                    background:scheduleMode===mode?"rgba(232,255,71,0.1)":"transparent",
-                    color:scheduleMode===mode?"#e8ff47":"#555",borderRadius:6,
-                    fontFamily:"Syne,sans-serif",fontSize:11,fontWeight:700,
-                    cursor:"pointer",letterSpacing:1}}>
-                  {label}
-                </button>
+          {/* ── ACTION BUTTON ── */}
+          {!scheduleActive && (
+            <button
+              onClick={mode==="manual" ? ()=>runAnalysis(false) : startSchedule}
+              disabled={running}
+              style={{width:"100%",padding:14,
+                background:running?"rgba(232,255,71,0.4)":"#e8ff47",
+                color:"#0a0a0f",border:"none",borderRadius:6,fontFamily:"Syne,sans-serif",
+                fontSize:13,fontWeight:800,letterSpacing:2,textTransform:"uppercase",
+                cursor:running?"not-allowed":"pointer",transition:"all 0.15s",
+                display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <span style={{fontSize:16}}>
+                {running?"⏳":mode==="manual"?"⚡":"▶"}
+              </span>
+              {running?"Analyzing...":mode==="manual"?"Run Analysis":"Start Schedule"}
+            </button>
+          )}
+        </div>
+
+        {/* ── SCHEDULE ACTIVE PANEL ── */}
+        {scheduleActive && scheduleDetails && (
+          <div style={{background:"#111118",border:"1px solid rgba(46,213,115,0.3)",borderRadius:12,
+            padding:28,marginBottom:24,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,
+              background:"linear-gradient(90deg,transparent,rgba(46,213,115,0.5),transparent)"}}/>
+
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+              <span style={{width:8,height:8,background:"#2ed573",borderRadius:"50%",
+                animation:"pulse 1.5s infinite",display:"inline-block"}}/>
+              <span style={{fontFamily:"Syne,sans-serif",fontSize:13,fontWeight:800,
+                color:"#2ed573",letterSpacing:2,textTransform:"uppercase"}}>Schedule Active</span>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+              {[
+                ["⏰","Frequency", scheduleDetails.label],
+                ["📅","Next Run",  scheduleDetails.nextRun?.toLocaleString()],
+                ["✅","Runs Done", scheduleDetails.runCount],
+              ].map(([icon,label,val])=>(
+                <div key={label} style={{background:"rgba(255,255,255,0.03)",border:"1px solid #1e1e2e",
+                  borderRadius:8,padding:"14px 16px"}}>
+                  <div style={{fontSize:18,marginBottom:6}}>{icon}</div>
+                  <div style={{fontSize:10,letterSpacing:2,color:"#555",textTransform:"uppercase",
+                    marginBottom:4,fontFamily:"Syne,sans-serif",fontWeight:700}}>{label}</div>
+                  <div style={{fontSize:12,color:"#f0f0f5",fontWeight:600}}>{val}</div>
+                </div>
               ))}
             </div>
-          </div>
 
-          {/* Interval Options */}
-          {scheduleMode==="interval" && (
-            <div style={{marginBottom:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <div>
-                <label style={labelStyle}>EVERY</label>
-                <input type="number" min={1} max={60} value={intervalValue}
-                  onChange={e=>setIntervalValue(Number(e.target.value))} style={inputStyle}/>
-              </div>
-              <div>
-                <label style={labelStyle}>UNIT</label>
-                <select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value)}
-                  style={{...inputStyle,cursor:"pointer"}}>
-                  <option value="minute">Minutes</option>
-                  <option value="hour">Hours</option>
-                </select>
-              </div>
+            <div style={{background:"rgba(232,255,71,0.04)",border:"1px solid rgba(232,255,71,0.15)",
+              borderRadius:6,padding:"10px 14px",marginBottom:20,fontSize:11,color:"#888"}}>
+              📧 Reports auto-sent to <strong style={{color:"#e8ff47"}}>{email}</strong> &nbsp;|&nbsp;
+              📅 Fetches <strong style={{color:"#e8ff47"}}>last 24 hours</strong> on every run
             </div>
-          )}
 
-          {/* Daily Time Option */}
-          {scheduleMode==="daily" && (
-            <div style={{marginBottom:16}}>
-              <label style={labelStyle}>RUN DAILY AT</label>
-              <input type="time" value={dailyTime} onChange={e=>setDailyTime(e.target.value)} style={inputStyle}/>
-            </div>
-          )}
-
-          {/* Next Run Info */}
-          {scheduleActive && nextRun && (
-            <div style={{marginBottom:14,padding:"10px 14px",background:"rgba(232,255,71,0.06)",
-              border:"1px solid rgba(232,255,71,0.2)",borderRadius:6,fontSize:11,
-              color:"#e8ff47",fontFamily:"'DM Mono',monospace"}}>
-              ⏰ Next run: {nextRun.toLocaleTimeString()} &nbsp;|&nbsp; Runs completed: {runCount}
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div style={{display:"grid",gridTemplateColumns:scheduleMode!=="manual"?"1fr 1fr":"1fr",gap:10}}>
-            <button onClick={run} disabled={running} style={{
-              padding:14,background:running?"rgba(232,255,71,0.4)":"#e8ff47",
-              color:"#0a0a0f",border:"none",borderRadius:6,fontFamily:"Syne,sans-serif",
-              fontSize:13,fontWeight:800,letterSpacing:2,textTransform:"uppercase",
-              cursor:running?"not-allowed":"pointer",transition:"all 0.15s",
-              display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <span style={{fontSize:16}}>{running?"⏳":"⚡"}</span>
-              {running?"Analyzing...":"Run Now"}
-            </button>
-            {scheduleMode!=="manual" && (
-              <button onClick={scheduleActive?stopSchedule:startSchedule}
-                style={{padding:14,
-                  background:scheduleActive?"rgba(255,71,87,0.15)":"rgba(46,213,115,0.15)",
-                  color:scheduleActive?"#ff4757":"#2ed573",
-                  border:`1px solid ${scheduleActive?"#ff4757":"#2ed573"}`,
-                  borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:13,fontWeight:800,
-                  letterSpacing:2,textTransform:"uppercase",cursor:"pointer",
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <button onClick={editSchedule}
+                style={{padding:12,background:"rgba(255,255,255,0.05)",border:"1px solid #1e1e2e",
+                  color:"#f0f0f5",borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:12,
+                  fontWeight:800,letterSpacing:2,textTransform:"uppercase",cursor:"pointer",
                   display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                {scheduleActive?"⏹ Stop":"▶ Start Schedule"}
+                ✏️ Edit Schedule
               </button>
-            )}
+              <button onClick={stopSchedule}
+                style={{padding:12,background:"rgba(255,71,87,0.1)",border:"1px solid rgba(255,71,87,0.4)",
+                  color:"#ff4757",borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:12,
+                  fontWeight:800,letterSpacing:2,textTransform:"uppercase",cursor:"pointer",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                ⏹ Cancel Schedule
+              </button>
+            </div>
+
+            {/* Can still run manually while scheduled */}
+            <button onClick={()=>runAnalysis(true)} disabled={running}
+              style={{width:"100%",marginTop:10,padding:11,
+                background:running?"rgba(232,255,71,0.2)":"rgba(232,255,71,0.08)",
+                border:"1px solid rgba(232,255,71,0.2)",color:"#e8ff47",
+                borderRadius:6,fontFamily:"Syne,sans-serif",fontSize:11,fontWeight:800,
+                letterSpacing:2,textTransform:"uppercase",cursor:running?"not-allowed":"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              {running?"⏳ Running...":"⚡ Run Now (Last 24h)"}
+            </button>
           </div>
-        </div>
+        )}
 
         {/* Terminal */}
         {logs.length>0 && (
-          <div style={{background:"#08080f",border:"1px solid #1e1e2e",borderRadius:8,
-            overflow:"hidden",marginBottom:24}}>
+          <div style={{background:"#08080f",border:"1px solid #1e1e2e",borderRadius:8,overflow:"hidden",marginBottom:24}}>
             <div style={{padding:"10px 16px",background:"#111118",borderBottom:"1px solid #1e1e2e",
-              display:"flex",alignItems:"center",gap:12,fontSize:11,color:"#555",
-              fontFamily:"'DM Mono',monospace"}}>
+              display:"flex",alignItems:"center",gap:12,fontSize:11,color:"#555",fontFamily:"'DM Mono',monospace"}}>
               <div style={{display:"flex",gap:5}}>
                 {["#ff5f57","#febc2e","#28c840"].map(c=>(
                   <div key={c} style={{width:10,height:10,borderRadius:"50%",background:c}}/>
@@ -536,10 +635,15 @@ function App() {
               <span>earnings-analyzer.log</span>
             </div>
             <div ref={logsRef} style={{padding:"16px 20px",maxHeight:280,overflowY:"auto"}}>
-              {logs.map((l,i)=><LogLine key={i} {...l}/>)}
-              {running && <span style={{display:"inline-block",width:7,height:12,
-                background:"#e8ff47",verticalAlign:"middle",
-                animation:"blink 1s step-end infinite",marginLeft:6}}/>}
+              {logs.map((l,i)=>(
+                <div key={i} style={{display:"flex",gap:12,fontSize:12,lineHeight:"1.8",
+                  fontFamily:"'DM Mono',monospace",animation:"fadeIn 0.3s ease"}}>
+                  <span style={{color:"#444",flexShrink:0}}>{l.time}</span>
+                  <span style={{color:{info:"#47ffe8",ok:"#2ed573",err:"#ff4757",ai:"#e8ff47",msg:"#c0c0d0"}[l.type]||"#c0c0d0"}}>{l.msg}</span>
+                </div>
+              ))}
+              {running && <span style={{display:"inline-block",width:7,height:12,background:"#e8ff47",
+                verticalAlign:"middle",animation:"blink 1s step-end infinite",marginLeft:6}}/>}
             </div>
           </div>
         )}
@@ -553,8 +657,7 @@ function App() {
             </div>
             {videos.map((v,i)=>(
               <div key={i} style={{background:"#111118",border:"1px solid #1e1e2e",borderRadius:8,
-                padding:"16px 20px",marginBottom:10,display:"flex",
-                alignItems:"flex-start",gap:14}}>
+                padding:"16px 20px",marginBottom:10,display:"flex",alignItems:"flex-start",gap:14}}>
                 <span style={{fontSize:18,flexShrink:0,marginTop:2}}>
                   {v.status==="Done"?"✅":v.status==="Error"?"❌":v.status==="Analyzing"?"⏳":"📄"}
                 </span>
@@ -563,11 +666,17 @@ function App() {
                     marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {v.title}
                   </div>
-                  <div style={{fontSize:11,color:"#555"}}>
-                    Published: {v.published_date} · Duration: {v.duration}
-                  </div>
+                  <div style={{fontSize:11,color:"#555"}}>Published: {v.published_date}</div>
                 </div>
-                <StatusBadge status={v.status}/>
+                <span style={{fontSize:10,fontFamily:"'DM Mono',monospace",padding:"3px 10px",
+                  borderRadius:4,flexShrink:0,textTransform:"uppercase",letterSpacing:1,
+                  background:{Done:"rgba(46,213,115,0.12)",Error:"rgba(255,71,87,0.12)",
+                    Analyzing:"rgba(232,255,71,0.12)",Pending:"rgba(255,255,255,0.05)"}[v.status]||"rgba(255,255,255,0.05)",
+                  color:{Done:"#2ed573",Error:"#ff4757",Analyzing:"#e8ff47",Pending:"#555"}[v.status]||"#555",
+                  border:`1px solid ${{Done:"rgba(46,213,115,0.3)",Error:"rgba(255,71,87,0.3)",
+                    Analyzing:"rgba(232,255,71,0.3)",Pending:"rgba(255,255,255,0.1)"}[v.status]||"rgba(255,255,255,0.1)"}`}}>
+                  {v.status}
+                </span>
               </div>
             ))}
           </div>
@@ -579,10 +688,11 @@ function App() {
             borderRadius:8,padding:"20px 24px",display:"flex",alignItems:"center",gap:16}}>
             <span style={{fontSize:28}}>✉️</span>
             <div>
-              <div style={{fontFamily:"Syne,sans-serif",fontSize:14,fontWeight:800,
-                color:"#2ed573",marginBottom:4}}>Report Delivered!</div>
+              <div style={{fontFamily:"Syne,sans-serif",fontSize:14,fontWeight:800,color:"#2ed573",marginBottom:4}}>
+                Report Delivered!
+              </div>
               <div style={{fontSize:12,color:"#2ed573"}}>
-                Full AI analysis sent to <strong>{email}</strong>
+                Individual analysis emails sent to <strong>{email}</strong>
               </div>
             </div>
           </div>
