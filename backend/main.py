@@ -284,6 +284,7 @@ def debug_videos():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 @app.post("/api/analyze")
 async def analyze(request: Request):
     body   = await request.json()
@@ -297,12 +298,12 @@ async def analyze(request: Request):
             resp = await client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={
-                    "Authorization": "Bearer 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",
+                    "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY', '')}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://earnings-intelligence-api.onrender.com",
                 },
                 json={
-                    "model": "deepseek/deepseek-chat-v3-0324:free",
+                    "model": "meta-llama/llama-3.3-70b-instruct:free",
                     "max_tokens": 4096,
                     "messages": [{"role": "user", "content": prompt}],
                 },
