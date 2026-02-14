@@ -303,7 +303,7 @@ async def analyze(request: Request):
                     "HTTP-Referer": "https://earnings-intelligence-api.onrender.com",
                 },
                 json={
-                    "model": "meta-llama/llama-3.3-70b-instruct:free",
+                    "model": "openrouter/auto",
                     "max_tokens": 4096,
                     "messages": [{"role": "user", "content": prompt}],
                 },
