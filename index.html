@@ -31,81 +31,93 @@ const { useState, useRef, useEffect } = React;
 
 const API_BASE = "https://earnings-intelligence-api.onrender.com";
 
-const ANALYSIS_PROMPT = `You are an expert equity research analyst with deep expertise in fundamental analysis, behavioral finance, industry dynamics, and technical interpretation.
-I will provide the quarterly earnings call transcript of a publicly traded company.
-Your job is to perform a comprehensive qualitative and quantitative analysis and determine if the stock is a good long-term hold.
+const ANALYSIS_PROMPT = `You are an expert equity research analyst. Analyze the earnings call transcript below and respond ONLY with a complete HTML block (no markdown, no backticks, no explanation outside the HTML). Use the exact HTML structure below, filling in all sections with real analysis.
 
-⚙️ ANALYSIS FRAMEWORK
+<div class="report">
 
-PART 1 — CORE FUNDAMENTAL ASSESSMENT
-Present findings using 🟢 Green (Positive), 🔴 Red (Negative), and ⚪ Grey (Neutral) indicators.
-1️⃣ Management Tone & Confidence
-2️⃣ Business Performance – revenue, profit, margins, EPS, cash flow, debt (YoY & QoQ)
-3️⃣ Growth Drivers – products, markets, partnerships, R&D, acquisitions
-4️⃣ Risks & Challenges – competitive threats, macro, cost pressures, regulatory
-5️⃣ Industry & Market Outlook
-6️⃣ Capital Allocation & Shareholder Returns
-7️⃣ Guidance & Forecast
-8️⃣ Sentiment Analysis
-9️⃣ Investment Rating – Strong Buy / Buy / Cautious / Sell
-🔟 Final Verdict
+<div class="section">
+<div class="section-title">⚙️ PART 1 — CORE FUNDAMENTAL ASSESSMENT</div>
 
-PART 2 — STRATEGIC QUALITY CHECK
-• Is multi-year ROE/ROCE rising and consistent?
-• Is management integrity unquestionable?
-• Is it a market leader with strong competitive moats?
-• Is cash flow conversion high (OCF/PAT > 1)?
-• DuPont ROE analysis insights?
-• Are sector/macro trends favorable?
-• Visible scalability and long-term compounding potential?
-• Category winner or turnaround candidate?
-• Sound capital allocation and shareholder alignment?
-• Are earnings, revenue, EPS consistently growing?
-• Are margins stable or expanding, debt manageable?
-• Resilient during downturns (e.g., COVID)?
-• Strong unit economics with pricing power?
-• Recent strategic shifts, leadership changes, product launches?
+<div class="item green">🟢 1️⃣ Management Tone & Confidence: [Optimistic/Cautious/Defensive — explain tone, key phrases used]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 2️⃣ Business Performance: [Revenue, profit, margins, EPS, cash flow, debt YoY & QoQ]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 3️⃣ Growth Drivers: [New products, markets, partnerships, R&D, acquisitions]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 4️⃣ Risks & Challenges: [Competitive threats, macro, cost pressures, regulatory]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 5️⃣ Industry & Market Outlook: [Sector trends, peer benchmarking]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 6️⃣ Capital Allocation: [Dividends, buybacks, debt repayment, reinvestment]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 7️⃣ Guidance & Forecast: [Management projections, credibility, visibility]</div>
+<div class="item [green|red|grey]">🟢/🔴/⚪ 8️⃣ Sentiment Analysis: [Linguistic tone, confidence vs caution signals]</div>
+<div class="rating-box [strong-buy|buy|hold|avoid]">9️⃣ Investment Rating: [STRONG BUY / BUY / HOLD / AVOID] — [one line rationale]</div>
+<div class="verdict-box">🔟 Final Verdict: [2–3 sentences on long-term suitability]</div>
+</div>
 
-PART 3 — CATALYST TABLE
-| Catalyst | Positive/Neutral/Negative | Key Evidence | Potential Stock Impact |
-|---|---|---|---|
-| 1️⃣ Operating Leverage & Margin Expansion | | | |
-| 2️⃣ Sectoral Tailwinds | | | |
-| 3️⃣ Product Mix Improvements | | | |
-| 4️⃣ Capacity Expansion Plans | | | |
-| 5️⃣ Insider Buying / Promoter Confidence | | | |
-| 6️⃣ Geographical Expansion | | | |
-| 7️⃣ Supply-Side Consolidation | | | |
-| 8️⃣ Debt Reduction / ROE-ROCE Improvement | | | |
-| 9️⃣ Operational Efficiency / Tech Adoption | | | |
-| 🔟 Market Share Gains | | | |
-| 11️⃣ Corporate Actions (M&A, Buyback, Spinoff) | | | |
-| 12️⃣ Creating Optionality (Governance, ESG, Leadership) | | | |
+<div class="section">
+<div class="section-title">🔍 PART 2 — STRATEGIC QUALITY CHECK</div>
+<div class="check-grid">
+<div class="check [yes|no|partial]">ROE/ROCE Trend: [Rising/Falling/Stable]</div>
+<div class="check [yes|no|partial]">Management Integrity: [Strong/Concerns/Unclear]</div>
+<div class="check [yes|no|partial]">Market Leadership: [Leader/Challenger/Niche]</div>
+<div class="check [yes|no|partial]">Cash Flow Quality: [OCF/PAT — High/Medium/Low]</div>
+<div class="check [yes|no|partial]">Sector Tailwinds: [Favorable/Neutral/Headwinds]</div>
+<div class="check [yes|no|partial]">Scalability: [High/Medium/Limited]</div>
+<div class="check [yes|no|partial]">Earnings Growth: [Consistent/Volatile/Declining]</div>
+<div class="check [yes|no|partial]">Pricing Power: [Strong/Moderate/Weak]</div>
+<div class="check [yes|no|partial]">COVID Resilience: [Resilient/Mixed/Impacted]</div>
+<div class="check [yes|no|partial]">Shareholder Alignment: [Strong/Moderate/Weak]</div>
+</div>
+</div>
 
-PART 4 — STRUCTURED SUMMARY
-| Category | Assessment | Evidence |
-|---|---|---|
-| Management Tone | | |
-| Financial Trends | | |
-| Growth Drivers | | |
-| Risks | | |
-| Industry Position | | |
-| Capital Allocation | | |
-| Guidance | | |
-| Sentiment | | |
-| Rating | | |
+<div class="section">
+<div class="section-title">⚡ PART 3 — CATALYST TABLE</div>
+<table class="catalyst-table">
+<thead><tr><th>Catalyst</th><th>Signal</th><th>Evidence</th><th>Impact</th></tr></thead>
+<tbody>
+<tr class="[pos|neu|neg]"><td>1️⃣ Operating Leverage & Margin Expansion</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>2️⃣ Sectoral Tailwinds</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>3️⃣ Product Mix Improvements</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>4️⃣ Capacity Expansion Plans</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>5️⃣ Promoter Confidence</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>6️⃣ Geographical Expansion</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>7️⃣ Supply-Side Consolidation</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>8️⃣ Debt Reduction / ROE-ROCE</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>9️⃣ Operational Efficiency</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>🔟 Market Share Gains</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>11️⃣ Corporate Actions</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+<tr class="[pos|neu|neg]"><td>12️⃣ Governance / ESG</td><td>[Positive/Neutral/Negative]</td><td>[evidence]</td><td>[impact]</td></tr>
+</tbody>
+</table>
+</div>
 
-🟢 Positives:
-🔴 Negatives:
-⚪ Neutrals:
+<div class="section">
+<div class="section-title">📋 PART 4 — STRUCTURED SUMMARY</div>
+<table class="summary-table">
+<thead><tr><th>Category</th><th>Assessment</th><th>Key Evidence</th></tr></thead>
+<tbody>
+<tr><td>Management Tone</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Financial Trends</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Growth Drivers</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Risks</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Industry Position</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Capital Allocation</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Guidance</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Sentiment</td><td>[assessment]</td><td>[evidence]</td></tr>
+<tr><td>Rating</td><td>[STRONG BUY/BUY/HOLD/AVOID]</td><td>[rationale]</td></tr>
+</tbody>
+</table>
+<div class="positives"><strong>🟢 Positives:</strong> [list key positives]</div>
+<div class="negatives"><strong>🔴 Negatives:</strong> [list key negatives]</div>
+<div class="neutrals"><strong>⚪ Neutrals:</strong> [list neutrals]</div>
+</div>
 
-PART 5 — CONCLUSION
-• Overall Management Tone: Bullish / Cautious / Defensive
-• Key Triggers for Next Quarter:
-• Risks Mentioned or Implied:
-• Verdict: Strong Buy / Buy or Accumulate / Hold / Watchlist / Avoid
-• Analyst View (5 sentences): conviction level, growth potential, valuation comfort zone.
-  If Buy, mention triggers that would upgrade to Strong Buy.
+<div class="section conclusion">
+<div class="section-title">🎯 PART 5 — CONCLUSION</div>
+<div class="conclusion-item"><strong>Overall Management Tone:</strong> [Bullish/Cautious/Defensive]</div>
+<div class="conclusion-item"><strong>Key Triggers for Next Quarter:</strong> [triggers]</div>
+<div class="conclusion-item"><strong>Risks Mentioned or Implied:</strong> [risks]</div>
+<div class="verdict-final [strong-buy|buy|hold|avoid]"><strong>Verdict:</strong> [STRONG BUY / BUY OR ACCUMULATE / HOLD / WATCHLIST / AVOID]</div>
+<div class="analyst-view"><strong>Analyst View:</strong> [5 sentences — conviction level, growth potential, valuation comfort zone. If Buy, mention triggers that would upgrade to Strong Buy.]</div>
+</div>
+
+</div>
 
 Transcript:
 ---
