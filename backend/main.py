@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # kept for fallback
+GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "AIzaSyACgFJcwAt2-r8WKxtDTYblKkCLM7hpd74")
 RESEND_API_KEY     = os.getenv("RESEND_API_KEY", "")
 TRENDLYNE_CHANNEL_ID = "UCznm57tnYpUpc2q2FmO3R3Q"
 JSONBIN_API_KEY    = os.getenv("JSONBIN_API_KEY", "")
@@ -286,7 +287,34 @@ Transcript:
 {TRANSCRIPT}
 ---"""
 
+# ── GEMINI AI ANALYSIS ───────────────────────────────────────────────────────
+# Gemini 1.5 Flash — free tier: 1 million tokens/day, 15 RPM
+GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_URL   = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+async def analyze_with_gemini(prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 8192,
+                    "temperature": 0.3,
+                },
+            },
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
+    data = resp.json()
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as e:
+        raise RuntimeError(f"Gemini response parse error: {e} — {str(data)[:200]}")
+
 async def analyze_with_openrouter(prompt: str) -> str:
+    """Fallback to OpenRouter if Gemini fails."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -304,6 +332,16 @@ async def analyze_with_openrouter(prompt: str) -> str:
     if resp.status_code != 200:
         raise RuntimeError(f"OpenRouter error {resp.status_code}: {resp.text[:200]}")
     return resp.json()["choices"][0]["message"]["content"]
+
+async def analyze_with_ai(prompt: str) -> str:
+    """Try Gemini first, fall back to OpenRouter."""
+    try:
+        result = await analyze_with_gemini(prompt)
+        logger.info("Analysis succeeded with Gemini")
+        return result
+    except Exception as e:
+        logger.warning(f"Gemini failed: {e} — trying OpenRouter fallback")
+        return await analyze_with_openrouter(prompt)
 
 # ── EMAIL ─────────────────────────────────────────────────────────────────────
 def build_email_html(item, index, total, from_date, to_date):
@@ -413,10 +451,10 @@ async def run_scheduled_job(schedule: dict):
                 continue
             append_activity("ai", f"✓ Got transcript ({round(len(transcript)/1000)}k chars) — running AI analysis...")
             prompt   = ANALYSIS_PROMPT.replace("{TRANSCRIPT}", transcript[:80000])
-            analysis = await analyze_with_openrouter(prompt)
+            analysis = await analyze_with_ai(prompt)
             analyses.append({**v, "analysis": analysis})
             append_activity("ok", f"✓ Analysis complete: {v['title']}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)  # avoid rate limits between AI calls
 
         valid = [a for a in analyses if a.get("analysis")]
         append_activity("ai", f"Sending {len(valid)} email(s) to {email}...")
@@ -502,7 +540,8 @@ async def analyze(request: Request):
     if not prompt:
         raise HTTPException(400, "prompt is required")
     try:
-        analysis = await analyze_with_openrouter(prompt)
+        analysis = await analyze_with_ai(prompt)
+        await asyncio.sleep(1)  # small delay to avoid rate limits
         return {"success": True, "analysis": analysis}
     except Exception as e:
         logger.error(f"analyze error: {e}")
