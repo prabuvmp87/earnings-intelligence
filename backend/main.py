@@ -293,25 +293,34 @@ GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_URL   = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 async def analyze_with_gemini(prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": 8192,
-                    "temperature": 0.3,
+    """Call Gemini with retry on 429 rate limit."""
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "maxOutputTokens": 8192,
+                        "temperature": 0.3,
+                    },
                 },
-            },
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
-    data = resp.json()
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Gemini response parse error: {e} — {str(data)[:200]}")
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError) as e:
+                raise RuntimeError(f"Gemini parse error: {e} — {str(data)[:200]}")
+        elif resp.status_code == 429:
+            wait = 10 * (attempt + 1)  # 10s, 20s, 30s
+            logger.warning(f"Gemini 429 rate limit — waiting {wait}s (attempt {attempt+1}/3)")
+            await asyncio.sleep(wait)
+            continue
+        else:
+            raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
+    raise RuntimeError("Gemini rate limited after 3 retries")
 
 async def analyze_with_openrouter(prompt: str) -> str:
     """Fallback to OpenRouter if Gemini fails."""
@@ -454,7 +463,7 @@ async def run_scheduled_job(schedule: dict):
             analysis = await analyze_with_ai(prompt)
             analyses.append({**v, "analysis": analysis})
             append_activity("ok", f"✓ Analysis complete: {v['title']}")
-            await asyncio.sleep(3)  # avoid rate limits between AI calls
+            await asyncio.sleep(5)  # Gemini free tier: 15 RPM = 1 per 4s
 
         valid = [a for a in analyses if a.get("analysis")]
         append_activity("ai", f"Sending {len(valid)} email(s) to {email}...")
@@ -541,7 +550,7 @@ async def analyze(request: Request):
         raise HTTPException(400, "prompt is required")
     try:
         analysis = await analyze_with_ai(prompt)
-        await asyncio.sleep(1)  # small delay to avoid rate limits
+        await asyncio.sleep(4)  # Gemini free tier: 15 RPM
         return {"success": True, "analysis": analysis}
     except Exception as e:
         logger.error(f"analyze error: {e}")
