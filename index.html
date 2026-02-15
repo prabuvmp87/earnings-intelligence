@@ -198,44 +198,46 @@ function App() {
   const addLog = (msg, type="msg") => setLogs(p=>[...p,{time:ts(),msg,type}]);
   const updateVideo = (idx, patch) => setVideos(p=>p.map((v,i)=>i===idx?{...v,...patch}:v));
 
-  // Poll backend logs every 5s to show server-side activity from any device
-  const lastLogTimeRef = useRef(null);
+  // Poll backend logs every 5s — always sync full server log
+  const serverLogsRef = useRef([]);
   useEffect(() => {
     async function pollLogs() {
       try {
-        const r = await fetch(`${API_BASE}/api/logs?limit=50`);
+        const r = await fetch(`${API_BASE}/api/logs?limit=100`);
         if (!r.ok) return;
         const data = await r.json();
         const entries = data.logs || [];
         if (!entries.length) return;
+
+        // Check if anything new compared to last poll
+        const prevNewest = serverLogsRef.current.length
+          ? serverLogsRef.current[serverLogsRef.current.length - 1].time
+          : null;
         const newest = entries[entries.length - 1].time;
-        if (newest === lastLogTimeRef.current) return; // no new entries
-        // Find new entries since last poll
-        const lastTime = lastLogTimeRef.current;
-        const newEntries = lastTime
-          ? entries.filter(e => e.time > lastTime)
-          : entries;
-        if (newEntries.length > 0) {
-          setLogs(prev => {
-            const existing = new Set(prev.map(l => l._id));
-            const toAdd = newEntries
-              .filter(e => !existing.has(e.time))
-              .map(e => ({
-                time: new Date(e.time).toLocaleTimeString("en-US",{hour12:false}),
-                type: e.level,
-                msg: e.msg,
-                _id: e.time,
-                _server: true,
-              }));
-            return toAdd.length ? [...prev, ...toAdd] : prev;
-          });
-          lastLogTimeRef.current = newest;
-        }
+        if (prevNewest === newest) return; // nothing changed
+
+        // Update server logs ref
+        serverLogsRef.current = entries;
+
+        // Convert all server entries to log format and set directly
+        const serverLogLines = entries.map(e => ({
+          time: new Date(e.time).toLocaleTimeString("en-US",{hour12:false}),
+          type: e.level,
+          msg:  e.msg,
+          _id:  e.time,
+          _server: true,
+        }));
+
+        // Merge: keep local-only logs (not from server), append server logs
+        setLogs(prev => {
+          const localOnly = prev.filter(l => !l._server);
+          return [...serverLogLines, ...localOnly];
+        });
       } catch(e) { /* silent */ }
     }
-    // Poll immediately then every 5s
+    // Poll immediately then every 3s
     pollLogs();
-    const interval = setInterval(pollLogs, 5000);
+    const interval = setInterval(pollLogs, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -264,7 +266,7 @@ function App() {
 
   function getLast24h() {
     const now  = new Date();
-    const past = new Date(Date.now()-24*60*60*1000);
+    const past = new Date(Date.now()-48*60*60*1000);
     return { from: past.toISOString().split("T")[0], to: now.toISOString().split("T")[0] };
   }
 
