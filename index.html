@@ -112,7 +112,7 @@ Transcript:
 {TRANSCRIPT}
 ---`;
 
-async function analyzeWithClaude(transcript, title) {
+async function analyzeWithAI(transcript, title) {
   const prompt = ANALYSIS_PROMPT.replace("{TRANSCRIPT}", transcript.slice(0, 80000));
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -321,8 +321,17 @@ function App() {
         setRunning(false); return;
       }
 
-      addLog(`✓ Found ${vData.videos.length} earnings call(s)`, "ok");
-      setVideos(vData.videos.map(v=>({...v,status:"Pending",analysis:""})));
+      // Filter only earnings call videos
+      const earningsVideos = vData.videos.filter(v =>
+        v.title.toLowerCase().includes("earnings call")
+      );
+      addLog(`✓ Found ${earningsVideos.length} earnings call(s) (filtered from ${vData.videos.length} total)`, "ok");
+      if (!earningsVideos.length) {
+        addLog("⚠ No earnings call videos found in this date range.", "err");
+        setRunning(false); return;
+      }
+      vData.videos = earningsVideos;
+      setVideos(earningsVideos.map(v=>({...v,status:"Pending",analysis:""})));
       setProgress(20);
 
       const analyses = [];
